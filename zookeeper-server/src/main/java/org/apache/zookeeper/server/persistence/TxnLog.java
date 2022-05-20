@@ -35,6 +35,7 @@ public interface TxnLog extends Closeable {
      * Setter for ServerStats to monitor fsync threshold exceed
      * @param serverStats used to update fsyncThresholdExceedCount
      */
+    // 设置服务状态
     void setServerStats(ServerStats serverStats);
 
     /**
@@ -42,6 +43,7 @@ public interface TxnLog extends Closeable {
      * log being appended to
      * @throws IOException
      */
+    // 滚动日志
     void rollLog() throws IOException;
     /**
      * Append a request to the transaction log
@@ -50,6 +52,7 @@ public interface TxnLog extends Closeable {
      * @return true iff something appended, otw false
      * @throws IOException
      */
+    // 追加
     boolean append(TxnHeader hdr, Record r) throws IOException;
 
     /**
@@ -70,6 +73,7 @@ public interface TxnLog extends Closeable {
      * next transaction in the logs.
      * @throws IOException
      */
+    // 读取数据
     TxnIterator read(long zxid) throws IOException;
 
     /**
@@ -77,6 +81,7 @@ public interface TxnLog extends Closeable {
      * @return the last zxid of the logged transactions.
      * @throws IOException
      */
+    // 获取最后一个zxid
     long getLastLoggedZxid() throws IOException;
 
     /**
@@ -85,6 +90,7 @@ public interface TxnLog extends Closeable {
      * @param zxid the zxid to truncate at.
      * @throws IOException
      */
+    // 删除日志
     boolean truncate(long zxid) throws IOException;
 
     /**
@@ -99,17 +105,20 @@ public interface TxnLog extends Closeable {
      * they are persisted
      * @throws IOException
      */
+    // 提交
     void commit() throws IOException;
 
     /**
      *
      * @return transaction log's elapsed sync time in milliseconds
      */
+    // 日志同步时间
     long getTxnLogSyncElapsedTime();
 
     /**
      * close the transactions logs
      */
+    // 关闭日志
     void close() throws IOException;
 
     /**
@@ -126,29 +135,34 @@ public interface TxnLog extends Closeable {
      * an iterating interface for reading
      * transaction logs.
      */
+    // 读取日志的接口
     interface TxnIterator extends Closeable {
 
         /**
          * return the transaction header.
          * @return return the transaction header.
          */
+        // 获取头信息
         TxnHeader getHeader();
 
         /**
          * return the transaction record.
          * @return return the transaction record.
          */
+        // 获取传输的内容
         Record getTxn();
 
         /**
          * @return the digest associated with the transaction.
          */
+        //
         TxnDigest getDigest();
 
         /**
          * go to the next transaction record.
          * @throws IOException
          */
+        // 下一条记录
         boolean next() throws IOException;
 
         /**
@@ -156,6 +170,7 @@ public interface TxnLog extends Closeable {
          * resources
          * @throws IOException
          */
+        // 关闭资源
         void close() throws IOException;
 
         /**
@@ -163,6 +178,7 @@ public interface TxnLog extends Closeable {
          * that will return by this iterator
          * @throws IOException
          */
+        // 获取存储的大小
         long getStorageSize() throws IOException;
 
     }

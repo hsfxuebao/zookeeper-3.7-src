@@ -170,6 +170,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     protected ZooKeeperServerBean jmxServerBean;
     protected DataTreeBean jmxDataTreeBean;
 
+    // 默认心跳间隔时间
     public static final int DEFAULT_TICK_TIME = 3000;
     protected int tickTime = DEFAULT_TICK_TIME;
     public static final int DEFAULT_THROTTLED_OP_WAIT_TIME = 0; // disabled
@@ -181,15 +182,19 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     protected int maxSessionTimeout = -1;
     /** Socket listen backlog. Value of -1 indicates unset */
     protected int listenBacklog = -1;
+    // 声明的session追踪
     protected SessionTracker sessionTracker;
     private FileTxnSnapLog txnLogFactory = null;
+    // ZK的database，其中包含了zk的数据结构节点信息以及监听器的信息
     private ZKDatabase zkDb;
     private ResponseCache readResponseCache;
     private ResponseCache getChildrenResponseCache;
     private final AtomicLong hzxid = new AtomicLong(0);
     public static final Exception ok = new Exception("No prob");
+    // 重要组件RequestProcessor调用链
     protected RequestProcessor firstProcessor;
     protected JvmPauseMonitor jvmPauseMonitor;
+    // server实例对象的初始状态
     protected volatile State state = State.INITIAL;
     private boolean isResponseCachingEnabled = true;
     /* contains the configuration file content read at startup */
@@ -220,10 +225,13 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     // this data structure must be accessed under the outstandingChanges lock
     final Map<String, ChangeRecord> outstandingChangesForPath = new HashMap<String, ChangeRecord>();
 
+    // 绑定的ServerCnxnFactory
     protected ServerCnxnFactory serverCnxnFactory;
     protected ServerCnxnFactory secureServerCnxnFactory;
 
+    // 服务的状态对象
     private final ServerStats serverStats;
+    // 服务监听器，目前的作用为用来停止ZK的Server实例
     private final ZooKeeperServerListener listener;
     private ZooKeeperServerShutdownHandler zkShutdownHandler;
     private volatile int createSessionTrackerServerId = 1;
@@ -514,13 +522,18 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
          *
          * See ZOOKEEPER-1642 for more detail.
          */
+        // 如果是集群模式，这个方法将会由leader调用，用来初始化zkDb中的
+        // DataTree并形成树形结构，而单机模式这个方法是一定会被调用的
         if (zkDb.isInitialized()) {
+            // 如果已经初始化了则只需要设置最新的zxid
             setZxid(zkDb.getDataTreeLastProcessedZxid());
         } else {
+            // 没有初始化则需要加载数据
             setZxid(zkDb.loadDataBase());
         }
 
         // Clean up dead sessions
+        // 清理已经死亡的session
         zkDb.getSessions().stream()
                         .filter(session -> zkDb.getSessionWithTimeOuts().get(session) == null)
                         .forEach(session -> killSession(session, zkDb.getDataTreeLastProcessedZxid()));
@@ -686,9 +699,12 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
     public void startdata() throws IOException, InterruptedException {
         //check to see if zkDb is not null
+        // 如果zkDb对象为空则实例化
         if (zkDb == null) {
+            // 实例化中会创建DataTree对象，并添加基础的root节点
             zkDb = new ZKDatabase(this.txnLogFactory);
         }
+        // 未初始化则加载快照来重新构建DataTree对象
         if (!zkDb.isInitialized()) {
             loadData();
         }
@@ -708,26 +724,30 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     private void startupWithServerState(State state) {
+        // 创建实例化sessionTracker对象并启动sessionTracker线程对象
         if (sessionTracker == null) {
             createSessionTracker();
         }
+        // 启动session追踪
         startSessionTracker();
+        // 设置单机模式下的三个重要RequestProcessor
         setupRequestProcessors();
 
         startRequestThrottler();
-
+        // 注册到JMX中，以方便监控
         registerJMX();
 
         startJvmPauseMonitor();
 
         registerMetrics();
 
+        // 设置状态
         setState(state);
 
         requestPathMetricsCollector.start();
 
         localSessionEnabled = sessionTracker.isLocalSessionsEnabled();
-
+        // 唤醒所有线程
         notifyAll();
     }
 
@@ -744,7 +764,12 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     protected void setupRequestProcessors() {
+        // 通过编码的方式确定各个RequestProcessor的前后关系以及手动启动
+        // RequestProcessor线程类型的对象
+        // 第一个RequestProcessor类型为调用链的FinalRequestProcessor类型
+        // 负责最后Response响应对象的实例化以及拼装
         RequestProcessor finalProcessor = new FinalRequestProcessor(this);
+        // 接下来的两个全是线程对象，大致功能这里便不做过多的分析了
         RequestProcessor syncProcessor = new SyncRequestProcessor(this, finalProcessor);
         ((SyncRequestProcessor) syncProcessor).start();
         firstProcessor = new PrepRequestProcessor(this, syncProcessor);

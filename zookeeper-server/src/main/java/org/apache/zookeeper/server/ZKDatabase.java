@@ -106,6 +106,7 @@ public class ZKDatabase {
      * @param snapLog the FileTxnSnapLog mapping this zkdatabase
      */
     public ZKDatabase(FileTxnSnapLog snapLog) {
+        // 实例化DataTree对象
         dataTree = createDataTree();
         sessionsWithTimeouts = new ConcurrentHashMap<Long, Integer>();
         this.snapLog = snapLog;
@@ -282,6 +283,7 @@ public class ZKDatabase {
      */
     public long loadDataBase() throws IOException {
         long startTime = Time.currentElapsedTime();
+        // 加载快照数据到dataTree对象将由snapLog对象完成
         long zxid = snapLog.restore(dataTree, sessionsWithTimeouts, commitProposalPlaybackListener);
         initialized = true;
         long loadTime = Time.currentElapsedTime() - startTime;

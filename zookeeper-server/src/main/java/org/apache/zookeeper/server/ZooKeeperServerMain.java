@@ -65,6 +65,7 @@ public class ZooKeeperServerMain {
     public static void main(String[] args) {
         ZooKeeperServerMain main = new ZooKeeperServerMain();
         try {
+            // todo 和Java普通的启动类一样，也是一个main函数，进行调用其它的方法
             main.initializeAndRun(args);
         } catch (IllegalArgumentException e) {
             LOG.error("Invalid arguments, exiting abnormally", e);
@@ -98,18 +99,21 @@ public class ZooKeeperServerMain {
 
     protected void initializeAndRun(String[] args) throws ConfigException, IOException, AdminServerException {
         try {
+            // 注册Log4j日志
             ManagedUtil.registerLog4jMBeans();
         } catch (JMException e) {
             LOG.warn("Unable to register log4j JMX control", e);
         }
-
+        // 客户端的配置对象
         ServerConfig config = new ServerConfig();
         if (args.length == 1) {
+            // 如果参数只有一位，则意味着只传了配置文件路径
             config.parse(args[0]);
         } else {
+            // 如果参数有多个，则每个位置都是具体的参数值
             config.parse(args);
         }
-
+        // 根据前面解析获得的配置对象进行进一步的配置
         runFromConfig(config);
     }
 
@@ -121,6 +125,8 @@ public class ZooKeeperServerMain {
      */
     public void runFromConfig(ServerConfig config) throws IOException, AdminServerException {
         LOG.info("Starting server");
+        // 在这个方法流程中，执行的大致功能为实例化其它的线程对象并启动
+        // 根据传进来的参数创建日志文件
         FileTxnSnapLog txnLog = null;
         try {
             try {
@@ -136,11 +142,15 @@ public class ZooKeeperServerMain {
             // so rather than spawning another thread, we will just call
             // run() in this thread.
             // create a file logger url from the command line args
+
+            // 在FileTxnSnapLog的构造方法中会创建数据和快照文件夹对象
+            // 如果文件夹为空则会新建一个
             txnLog = new FileTxnSnapLog(config.dataLogDir, config.dataDir);
             JvmPauseMonitor jvmPauseMonitor = null;
             if (config.jvmPauseMonitorToRun) {
                 jvmPauseMonitor = new JvmPauseMonitor(config);
             }
+            // 创建ZooKeeperServer 对象
             final ZooKeeperServer zkServer = new ZooKeeperServer(jvmPauseMonitor, txnLog, config.tickTime, config.minSessionTimeout, config.maxSessionTimeout, config.listenBacklog, null, config.initialConfig);
             txnLog.setServerStats(zkServer.serverStats());
 
@@ -156,8 +166,11 @@ public class ZooKeeperServerMain {
 
             boolean needStartZKServer = true;
             if (config.getClientPortAddress() != null) {
+                // 创建的默认类型是NIOServerCnxnFactory，使用NIO进行IO多路复用
                 cnxnFactory = ServerCnxnFactory.createFactory();
+                // 会打开绑定端口地址到NIO对象上，稍后看下该方法
                 cnxnFactory.configure(config.getClientPortAddress(), config.getMaxClientCnxns(), config.getClientPortListenBacklog(), false);
+                // 开始启动和配置ZK运行时所需要的重要组件，基本都是启动相应线程对象
                 cnxnFactory.startup(zkServer);
                 // zkServer has been started. So we don't need to start it again in secureCnxnFactory.
                 needStartZKServer = false;
@@ -187,12 +200,15 @@ public class ZooKeeperServerMain {
             shutdown();
 
             if (cnxnFactory != null) {
+                // 等待cnxnFactory对象启动的子线程执行结束再往下走，否则阻塞
                 cnxnFactory.join();
             }
             if (secureCnxnFactory != null) {
                 secureCnxnFactory.join();
             }
+            // 跑到这里说明cnxnFactory的子线程都停止了
             if (zkServer.canShutdown()) {
+                // 如果ZK还是正常运行则需要关闭
                 zkServer.shutdown(true);
             }
         } catch (InterruptedException e) {

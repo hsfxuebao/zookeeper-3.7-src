@@ -24,7 +24,7 @@ import java.util.TreeMap;
 
 /**
  * Interface that all the serializers have to implement.
- *
+ * 序列化支持的数据类型
  */
 public interface OutputArchive {
 

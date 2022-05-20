@@ -22,7 +22,7 @@ import java.io.IOException;
 
 /**
  * Interface that all the Deserializers have to implement.
- *
+ * 反序列化支持的数据类型
  */
 public interface InputArchive {
 

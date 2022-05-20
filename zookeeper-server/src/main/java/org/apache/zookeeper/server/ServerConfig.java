@@ -40,15 +40,21 @@ public class ServerConfig {
     //// If you update the configuration parameters be sure
     //// to update the "conf" 4letter word
     ////
+    // 端口和ip的存储对象
     protected InetSocketAddress clientPortAddress;
     protected InetSocketAddress secureClientPortAddress;
+    // 数据文件夹以及日志文件夹路径
     protected File dataDir;
     protected File dataLogDir;
+    // 检测心跳的间隔时间， 默认3秒
     protected int tickTime = ZooKeeperServer.DEFAULT_TICK_TIME;
+    // 最大客户端连接数
     protected int maxClientCnxns;
     /** defaults to -1 if not set explicitly */
+    // 最小的session过期时间
     protected int minSessionTimeout = -1;
     /** defaults to -1 if not set explicitly */
+    // 最大的session过期时间
     protected int maxSessionTimeout = -1;
     protected String metricsProviderClassName = DefaultMetricsProvider.class.getName();
     protected Properties metricsProviderConfiguration = new Properties();
@@ -71,16 +77,21 @@ public class ServerConfig {
      * @throws IllegalArgumentException on invalid usage
      */
     public void parse(String[] args) {
+
+        // 参数长度必须为3-4，否则抛异常
         if (args.length < 2 || args.length > 4) {
             throw new IllegalArgumentException("Invalid number of arguments:" + Arrays.toString(args));
         }
-
+        // 第一个是ip和端口
         clientPortAddress = new InetSocketAddress(Integer.parseInt(args[0]));
+        // 第二个是数据日志路径
         dataDir = new File(args[1]);
         dataLogDir = dataDir;
+        // 第三个是心跳检测间隔时间
         if (args.length >= 3) {
             tickTime = Integer.parseInt(args[2]);
         }
+        // 第四个是客户端最大连接数
         if (args.length == 4) {
             maxClientCnxns = Integer.parseInt(args[3]);
         }
@@ -92,11 +103,14 @@ public class ServerConfig {
      * @throws ConfigException error processing configuration
      */
     public void parse(String path) throws ConfigException {
+        // 如果传进来的是文件夹路径则使用QuorumPeerConfig对象去解析
         QuorumPeerConfig config = new QuorumPeerConfig();
+        // 开始解析文件
         config.parse(path);
 
         // let qpconfig parse the file and then pull the stuff we are
         // interested in
+        // 将解析获得的配置文件属性进行赋值
         readFrom(config);
     }
 
@@ -105,6 +119,7 @@ public class ServerConfig {
      * @param config
      */
     public void readFrom(QuorumPeerConfig config) {
+        // 分别对成员对象进行赋值
         clientPortAddress = config.getClientPortAddress();
         secureClientPortAddress = config.getSecureClientPortAddress();
         dataDir = config.getDataDir();

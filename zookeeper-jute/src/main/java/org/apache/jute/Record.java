@@ -23,9 +23,12 @@ import org.apache.yetus.audience.InterfaceAudience;
 
 /**
  * Interface that is implemented by generated classes.
+ *
  */
 @InterfaceAudience.Public
 public interface Record {
+    // 序列化
     void serialize(OutputArchive archive, String tag) throws IOException;
+    // 反序列化
     void deserialize(InputArchive archive, String tag) throws IOException;
 }

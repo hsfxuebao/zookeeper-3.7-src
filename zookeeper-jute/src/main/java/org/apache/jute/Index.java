@@ -30,9 +30,11 @@ package org.apache.jute;
  *   idx.incr();
  * }
  * </code>
- *
+ * 迭代
  */
 public interface Index {
+    // 结束
     boolean done();
+    // 下一个
     void incr();
 }

@@ -82,6 +82,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
     public static final String ZOOKEEPER_NIO_SHUTDOWN_TIMEOUT = "zookeeper.nio.shutdownTimeout";
 
     static {
+
         Thread.setDefaultUncaughtExceptionHandler((t, e) -> LOG.error("Thread {} died", t, e));
 
         /**
@@ -567,6 +568,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
 
     }
 
+    // NIO的Server端SocketChannel对象，用来和Client端的SocketChannel通信
     ServerSocketChannel ss;
 
     /**
@@ -589,6 +591,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
     // ipMap is used to limit connections per IP
     private final ConcurrentHashMap<InetAddress, Set<NIOServerCnxn>> ipMap = new ConcurrentHashMap<InetAddress, Set<NIOServerCnxn>>();
 
+    // Client连接默认最多60个
     protected int maxClientCnxns = 60;
     int listenBacklog = -1;
 
@@ -620,8 +623,10 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         if (secure) {
             throw new UnsupportedOperationException("SSL isn't supported in NIOServerCnxn");
         }
+        // 设置SASL登录相关的，略过
         configureSaslLogin();
 
+        // 设置最大客户端连接数
         maxClientCnxns = maxcc;
         initMaxCnxns();
         sessionlessCnxnTimeout = Integer.getInteger(ZOOKEEPER_NIO_SESSIONLESS_CNXN_TIMEOUT, 10000);
@@ -655,6 +660,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         }
 
         listenBacklog = backlog;
+        // 开始打开Server通道并绑定端口和地址
         this.ss = ServerSocketChannel.open();
         ss.socket().setReuseAddress(true);
         LOG.info("binding to port {}", addr);
@@ -664,6 +670,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
             ss.socket().bind(addr, listenBacklog);
         }
         ss.configureBlocking(false);
+
         acceptThread = new AcceptThread(ss, addr, selectorThreads);
     }
 
@@ -738,10 +745,14 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
 
     @Override
     public void startup(ZooKeeperServer zks, boolean startServer) throws IOException, InterruptedException {
+        // 启动刚刚实例化的几个线程
         start();
+        // 关联ZooKeeperServer对象和工厂对象的关系
         setZooKeeperServer(zks);
         if (startServer) {
+            // 开始启动复原ZooKeeperServer的数据结构及session数据
             zks.startdata();
+            // 正式启动ZooKeeperServer的主要组件
             zks.startup();
         }
     }

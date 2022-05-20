@@ -251,6 +251,7 @@ public class FileTxnSnapLog {
      */
     public long restore(DataTree dt, Map<Long, Integer> sessions, PlayBackListener listener) throws IOException {
         long snapLoadingStartTime = Time.currentElapsedTime();
+        // 反序列化快照文件到dataTree中
         long deserializeResult = snapLog.deserialize(dt, sessions);
         ServerMetrics.getMetrics().STARTUP_SNAP_LOAD_TIME.add(Time.currentElapsedTime() - snapLoadingStartTime);
         FileTxnLog txnLog = new FileTxnLog(dataDir);
@@ -264,6 +265,7 @@ public class FileTxnSnapLog {
         }
 
         RestoreFinalizer finalizer = () -> {
+            // 最大的zxid，表示最新的zxid
             long highestZxid = fastForwardFromEdits(dt, sessions, listener);
             // The snapshotZxidDigest will reset after replaying the txn of the
             // zxid in the snapshotZxidDigest, if it's not reset to null after
@@ -347,6 +349,7 @@ public class FileTxnSnapLog {
                     highestZxid = hdr.getZxid();
                 }
                 try {
+                    // todo 这个方法十分重要，里面调用了DataTree的执行处理连接方法
                     processTransaction(hdr, dt, sessions, itr.getTxn());
                     dt.compareDigest(hdr, itr.getTxn(), itr.getDigest());
                     txnLoaded++;
@@ -357,7 +360,9 @@ public class FileTxnSnapLog {
                                           + e.getMessage(),
                                           e);
                 }
+                // 处理成功，记录到提交日志中
                 listener.onTxnLoaded(hdr, itr.getTxn(), itr.getDigest());
+                // 没有下一个了，退出循环
                 if (!itr.next()) {
                     break;
                 }
@@ -415,8 +420,10 @@ public class FileTxnSnapLog {
         Map<Long, Integer> sessions,
         Record txn) throws KeeperException.NoNodeException {
         ProcessTxnResult rc;
+        // 不同的header操作类型调用的都是DataTree的processTxn方法
         switch (hdr.getType()) {
         case OpCode.createSession:
+            // 当有新连接进来时，将会进入这里，添加新的session信息
             sessions.put(hdr.getClientId(), ((CreateSessionTxn) txn).getTimeOut());
             if (LOG.isTraceEnabled()) {
                 ZooTrace.logTraceMessage(
@@ -426,9 +433,12 @@ public class FileTxnSnapLog {
                     + " with timeout: " + ((CreateSessionTxn) txn).getTimeOut());
             }
             // give dataTree a chance to sync its lastProcessedZxid
+            // 调用DataTree的processTxn，所有的操作类型最终都会进入到这个
+            // 方法里面，等后面分析运行流程时再进一步分析
             rc = dt.processTxn(hdr, txn);
             break;
         case OpCode.closeSession:
+            // 当有连接关闭时把session进行删除
             sessions.remove(hdr.getClientId());
             if (LOG.isTraceEnabled()) {
                 ZooTrace.logTraceMessage(
@@ -436,6 +446,8 @@ public class FileTxnSnapLog {
                     ZooTrace.SESSION_TRACE_MASK,
                     "playLog --- close session in log: 0x" + Long.toHexString(hdr.getClientId()));
             }
+            // 不是新连接和关闭连接，则直接进入普通的操作类型，在这里面将会完成
+            // 不同操作类型的转发处理
             rc = dt.processTxn(hdr, txn);
             break;
         default:

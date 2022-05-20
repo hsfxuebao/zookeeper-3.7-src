@@ -51,6 +51,7 @@ public final class ConnectStringParser {
      */
     public ConnectStringParser(String connectString) {
         // parse out chroot, if any
+        // 解析chroot，如果有的话（其他的一种写法，不用关注）
         int off = connectString.indexOf('/');
         if (off >= 0) {
             String chrootPath = connectString.substring(off);
@@ -66,6 +67,7 @@ public final class ConnectStringParser {
             this.chrootPath = null;
         }
 
+        // 逗号分割
         List<String> hostsList = split(connectString, ",");
         for (String host : hostsList) {
             int port = DEFAULT_PORT;
@@ -85,6 +87,7 @@ public final class ConnectStringParser {
                     host = host.substring(0, pidx);
                 }
             }
+            //解析出主机和端口后生成地址并添加到serverAddresses
             serverAddresses.add(InetSocketAddress.createUnresolved(host, port));
         }
     }

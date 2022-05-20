@@ -145,13 +145,24 @@ public class ClientCnxn {
     /**
      * These are the packets that have been sent and are waiting for a response.
      */
+    // 当Client端的数据包Packet被发送出去时，如果不是ping和auth两种操作类型，其
+    // 它操作类型的包都会保存在队列末尾，代表着已发送但未完成的数据，在最后Client
+    // 端收到ZK的响应时，将会把队列第一个拿出来进行响应的处理。采用的是FIFO模式，
+    // 是因为ZK的Server端接收请求处理请求是有序的，处理完前面一个才会处理后面一个
+    // 因此客户端可以采用FIFO的模式处理
     private final Queue<Packet> pendingQueue = new ArrayDeque<>();
 
     /**
      * These are the packets that need to be sent.
      */
+    // 发送队列，当Client端有请求需要发送时将会封装成Packet包添加到这里面，在
+    // SendThread线程轮询到有数据时将会取出第一个包数据进行处理发送。使用的也是
+    // FIFO模式
     private final LinkedBlockingDeque<Packet> outgoingQueue = new LinkedBlockingDeque<Packet>();
 
+    // 连接时间，初始化时等于客户端sessionTimeout / 可用连接串数量，如果连接成功
+    // 后将会等于协约时间negotiatedSessionTimeout / 可用连接串数量，因此正常
+    // 而言，此值就是negotiatedSessionTimeout / 可用连接串数量
     private int connectTimeout;
 
     /**
@@ -160,14 +171,21 @@ public class ClientCnxn {
      * been increased/decreased by the server which applies bounds to this
      * value.
      */
+    // 协约时间，ZK的Server端会设置tickTime，Client端会传sessionTimeout，ZK的
+    // Server端将会根据两边的配置进行计算得出两边都能接受的时间，然后返回。这个
+    // 字段保存的就是协商之后的session过期时间
     private volatile int negotiatedSessionTimeout;
-
+    // 读取过期时间，连接时值为sessionTimeout * 2 / 3，当连接成功后值为
+    // negotiatedSessionTimeout * 2 / 3
     private int readTimeout;
-
+    // 开发人员自己定义的客户端过期时间sessionTimeout（注意这个时间并不是最终
+    // Client端运行时的心跳检测时间，后续会出一篇这些时间的具体作用以及计算规则）
     private final int sessionTimeout;
 
+    // 客户端的监听器管理类，包含了默认监听器和三种不同类型的监听器
     private final ZKWatchManager watchManager;
 
+    // 本客户端连接实例的sessionId
     private long sessionId;
 
     private byte[] sessionPasswd;
@@ -178,12 +196,13 @@ public class ClientCnxn {
      * server on the other side of the wire is partitioned it'll accept
      * read-only clients only.
      */
+    // 是否只可读
     private boolean readOnly;
-
+    // 将来将会被删除，暂时不知道有何用
     final String chrootPath;
-
+    // Client端对Server端发送和接收消息的线程对象
     final SendThread sendThread;
-
+    // Client端负责处理响应事件的线程对象
     final EventThread eventThread;
 
     /**
@@ -192,11 +211,13 @@ public class ClientCnxn {
      * connection (client sends session disconnect to server as part of close
      * operation)
      */
+    // Client端的连接是否已经关闭
     private volatile boolean closing = false;
 
     /**
      * A set of ZooKeeper hosts this client could connect to.
      */
+    // 连接串的解析后获得的InetSocketAddress提供对象
     private final HostProvider hostProvider;
 
     /**
@@ -380,6 +401,7 @@ public class ClientCnxn {
         ClientCnxnSocket clientCnxnSocket,
         boolean canBeReadOnly
     ) throws IOException {
+        // 没有连接密码的构造函数
         this(
             chrootPath,
             hostProvider,
@@ -419,6 +441,7 @@ public class ClientCnxn {
         byte[] sessionPasswd,
         boolean canBeReadOnly
     ) throws IOException {
+        // 最终调用赋值的构造函数
         this.chrootPath = chrootPath;
         this.hostProvider = hostProvider;
         this.sessionTimeout = sessionTimeout;
@@ -430,17 +453,19 @@ public class ClientCnxn {
         this.watchManager = new ZKWatchManager(
                 clientConfig.getBoolean(ZKClientConfig.DISABLE_AUTO_WATCH_RESET),
                 defaultWatcher);
-
+        // 计算未连接时的过期时间
         this.connectTimeout = sessionTimeout / hostProvider.size();
         this.readTimeout = sessionTimeout * 2 / 3;
-
+        // 初始化两个线程对象
         this.sendThread = new SendThread(clientCnxnSocket);
         this.eventThread = new EventThread();
         initRequestTimeout();
     }
 
     public void start() {
+        // 启动连接线程
         sendThread.start();
+        // 启动事件线程
         eventThread.start();
     }
 
@@ -866,7 +891,9 @@ public class ClientCnxn {
     class SendThread extends ZooKeeperThread {
 
         private long lastPingSentNs;
+        // 客户端连接Server端的负责对象，默认采用的是NIO方式连接
         private final ClientCnxnSocket clientCnxnSocket;
+        // 是否为第一次连接，默认是true
         private boolean isFirstConnect = true;
         private volatile ZooKeeperSaslClient zooKeeperSaslClient;
 
@@ -1006,12 +1033,21 @@ public class ClientCnxn {
                 "Socket connection established, initiating session, client: {}, server: {}",
                 clientCnxnSocket.getLocalSocketAddress(),
                 clientCnxnSocket.getRemoteSocketAddress());
+            // 调用了这个方法说明客户端和Server端的Socket长连接已经连接完毕了
+            // 设置isFirstConnect为false
             isFirstConnect = false;
             long sessId = (seenRwServerBefore) ? sessionId : 0;
+            // 创建连接的请求对象ConnectRequest
             ConnectRequest conReq = new ConnectRequest(0, lastZxid, sessionTimeout, sessId, sessionPasswd);
             // We add backwards since we are pushing into the front
             // Only send if there's a pending watch
+            // disableAutoWatchReset对应着ZK的启动属性
+            // zookeeper.disableAutoWatchReset，如果为false则为自动将ZK的
+            // 监听器监听到相应的节点，为true则不会自动监听
             if (!clientConfig.getBoolean(ZKClientConfig.DISABLE_AUTO_WATCH_RESET)) {
+                // 接下来的流程大概就是从zooKeeper获取三种类型的监听器
+                // 把三种类型的监听器依次封装成SetWatches包保存到
+                // outgoingQueue包中以便后续发送包数据，具体的流程便忽略
                 List<String> dataWatches = watchManager.getDataWatchList();
                 List<String> existWatches = watchManager.getExistWatchList();
                 List<String> childWatches = watchManager.getChildWatchList();
@@ -1025,7 +1061,7 @@ public class ClientCnxn {
                     Iterator<String> persistentWatchesIter = prependChroot(persistentWatches).iterator();
                     Iterator<String> persistentRecursiveWatchesIter = prependChroot(persistentRecursiveWatches).iterator();
                     long setWatchesLastZxid = lastZxid;
-
+                    // 轮询三种的迭代器获取迭代器具体数据
                     while (dataWatchesIter.hasNext() || existWatchesIter.hasNext() || childWatchesIter.hasNext()
                             || persistentWatchesIter.hasNext() || persistentRecursiveWatchesIter.hasNext()) {
                         List<String> dataWatchesBatch = new ArrayList<String>();
@@ -1060,6 +1096,7 @@ public class ClientCnxn {
                             batchLength += watch.length();
                         }
 
+                        // 将获取到的监听器封装成SetWatches对象
                         Record record;
                         int opcode;
                         if (persistentWatchesBatch.isEmpty() && persistentRecursiveWatchesBatch.isEmpty()) {
@@ -1073,7 +1110,9 @@ public class ClientCnxn {
                             opcode = OpCode.setWatches2;
                         }
                         RequestHeader header = new RequestHeader(ClientCnxn.SET_WATCHES_XID, opcode);
+                        // 随后使用Packet封装Header和Recrod
                         Packet packet = new Packet(header, new ReplyHeader(), record, null, null);
+                        // 添加到outgoingQueue数据中
                         outgoingQueue.addFirst(packet);
                     }
                 }
@@ -1088,7 +1127,9 @@ public class ClientCnxn {
                         null,
                         null));
             }
+            // 将ConnectRequest同样封装成Packet对象放到outgoingQueue中
             outgoingQueue.addFirst(new Packet(null, null, conReq, null, null, readOnly));
+            // 开启OP_WRITE操作，开启后Selector.select()将可以收到读IO
             clientCnxnSocket.connectionPrimed();
             LOG.debug("Session establishment request sent on {}", clientCnxnSocket.getRemoteSocketAddress());
         }
@@ -1138,11 +1179,14 @@ public class ClientCnxn {
                     LOG.warn("Unexpected exception", e);
                 }
             }
+            // 修改server状态
             changeZkState(States.CONNECTING);
 
             String hostPort = addr.getHostString() + ":" + addr.getPort();
             MDC.put("myid", hostPort);
+            // 设置连接名称
             setName(getName().replaceAll("\\(.*\\)", "(" + hostPort + ")"));
+            // 判断是否开启了SASL的客户端验证机制（C/S模式的验证机制）
             if (clientConfig.isSaslClientEnabled()) {
                 try {
                     if (zooKeeperSaslClient != null) {
@@ -1162,8 +1206,9 @@ public class ClientCnxn {
                     saslLoginFailed = true;
                 }
             }
+            // 进行连接的日志打印
             logStartConnect(addr);
-
+            // 调用clientCnxnSocket的连接方法
             clientCnxnSocket.connect(addr);
         }
 
@@ -1177,17 +1222,23 @@ public class ClientCnxn {
         @Override
         @SuppressFBWarnings("JLM_JSR166_UTILCONCURRENT_MONITORENTER")
         public void run() {
+            // 更新clientCnxnSocket的发送事件以及关联SendTreahd，这里sessionId
+            // 没有值，就是0
             clientCnxnSocket.introduce(this, sessionId, outgoingQueue);
             clientCnxnSocket.updateNow();
             clientCnxnSocket.updateLastSendAndHeard();
+            // 上次ping和现在的时间差
             int to;
             long lastPingRwServer = Time.currentElapsedTime();
             final int MAX_SEND_PING_INTERVAL = 10000; //10 seconds
             InetSocketAddress serverAddress = null;
+            // 只要连接没有关闭，也没有验证失败，就一直循环
             while (state.isAlive()) {
                 try {
+                    // 刚开始运行时这里肯定是未连接的状态，因此会进去
                     if (!clientCnxnSocket.isConnected()) {
                         // don't re-establish connection if we are closing
+                        // 如果ZK已经关闭了则直接会出循环
                         if (closing) {
                             break;
                         }
@@ -1195,12 +1246,15 @@ public class ClientCnxn {
                             serverAddress = rwServerAddress;
                             rwServerAddress = null;
                         } else {
+                            // 获取要连接的server的址
                             serverAddress = hostProvider.next(1000);
                         }
                         onConnecting(serverAddress);
+                        // 开始连接
                         startConnect(serverAddress);
                         // Update now to start the connection timer right after we make a connection attempt
                         clientCnxnSocket.updateNow();
+                        // 更新交互（连接请求/读写请求）时间戳
                         clientCnxnSocket.updateLastSendAndHeard();
                     }
 
@@ -1237,17 +1291,21 @@ public class ClientCnxn {
                                 }
                             }
                         }
+                        // 获取已经有多久没有收到交互响应了
                         to = readTimeout - clientCnxnSocket.getIdleRecv();
                     } else {
+                        // 获取已经有多久没有收到连接请求的响应了
                         to = connectTimeout - clientCnxnSocket.getIdleRecv();
                     }
 
+                    // 处理会话超时的情况
                     if (to <= 0) {
                         String warnInfo = String.format(
                             "Client session timed out, have not heard from server in %dms for session id 0x%s",
                             clientCnxnSocket.getIdleRecv(),
                             Long.toHexString(sessionId));
                         LOG.warn(warnInfo);
+                        // 抛出会话超时异常
                         throw new SessionTimeoutException(warnInfo);
                     }
                     if (state.isConnected()) {
@@ -1279,7 +1337,9 @@ public class ClientCnxn {
                         }
                         to = Math.min(to, pingRwTimeout - idlePingRwServer);
                     }
-
+                    // 这个方法十分重要，因为不管是连接还是其它任何操作都会进入
+                    // 该方法进行操作类型判断已经发送接收数据包，具体流程留到
+                    // 后续分析clientCnxnSocket对象时再看
                     clientCnxnSocket.doTransport(to, pendingQueue, ClientCnxn.this);
                 } catch (Throwable e) {
                     if (closing) {
@@ -1304,7 +1364,8 @@ public class ClientCnxn {
                     }
                 }
             }
-
+            // 跑到这里说明ZK已经关闭了，后面会做一些善后的工作，如发送关闭事件
+            // 清除连接的缓存数据等
             synchronized (outgoingQueue) {
                 // When it comes to this point, it guarantees that later queued
                 // packet to outgoingQueue will be notified of death.

@@ -377,6 +377,7 @@ public class ZooKeeper implements AutoCloseable {
         }
     }
 
+    // 一共有这么多状态
     @InterfaceAudience.Public
     public enum States {
         CONNECTING,
@@ -450,6 +451,7 @@ public class ZooKeeper implements AutoCloseable {
      *             </ul>
      */
     public ZooKeeper(String connectString, int sessionTimeout, Watcher watcher) throws IOException {
+        // 一般而言新建连接都是使用的这个接口
         this(connectString, sessionTimeout, watcher, false);
     }
 
@@ -663,8 +665,9 @@ public class ZooKeeper implements AutoCloseable {
         validateWatcher(watcher);
         this.clientConfig = clientConfig != null ? clientConfig : new ZKClientConfig();
         this.hostProvider = hostProvider;
+        // 创建一个zk集群字符串解析器，将解析出的ip与port构建为一个地址实例，放入到缓存集合
         ConnectStringParser connectStringParser = new ConnectStringParser(connectString);
-
+        // 创建一个对server的连接
         cnxn = createConnection(
             connectStringParser.getChrootPath(),
             hostProvider,
@@ -673,6 +676,7 @@ public class ZooKeeper implements AutoCloseable {
             watcher,
             getClientCnxnSocket(),
             canBeReadOnly);
+        // 开始连接
         cnxn.start();
     }
 
@@ -757,6 +761,7 @@ public class ZooKeeper implements AutoCloseable {
         int sessionTimeout,
         Watcher watcher,
         boolean canBeReadOnly) throws IOException {
+        // createDefaultHostProvider() 解析给出的server的址址，并对解析结果进行第一次shuffle
         this(connectString, sessionTimeout, watcher, canBeReadOnly, createDefaultHostProvider(connectString));
     }
 
@@ -1186,6 +1191,8 @@ public class ZooKeeper implements AutoCloseable {
 
     // default hostprovider
     private static HostProvider createDefaultHostProvider(String connectString) {
+        // ConnectStringParser() 用于解析指定的server地址列表字符串
+        // getServerAddresses() 获取到所有解析出来的地址集合
         return new StaticHostProvider(new ConnectStringParser(connectString).getServerAddresses());
     }
 

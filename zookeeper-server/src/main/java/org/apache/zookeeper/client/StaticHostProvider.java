@@ -82,7 +82,10 @@ public final class StaticHostProvider implements HostProvider {
      *             if serverAddresses is empty or resolves to an empty list
      */
     public StaticHostProvider(Collection<InetSocketAddress> serverAddresses) {
+        // init() 的第三个参数是创建了一个地址处理器
+        // init()中进行了第一次地址的shuffle
         init(serverAddresses, System.currentTimeMillis() ^ this.hashCode(), new Resolver() {
+            // 根据指定的主机名，获取到所有其对应的ip地址
             @Override
             public InetAddress[] getAllByName(String name) throws UnknownHostException {
                 return InetAddress.getAllByName(name);
@@ -130,6 +133,7 @@ public final class StaticHostProvider implements HostProvider {
         if (serverAddresses.isEmpty()) {
             throw new IllegalArgumentException("A HostProvider may not be empty!");
         }
+        // 对地址的第一次打散(shuffle)
         this.serverAddresses = shuffle(serverAddresses);
         currentIndex = -1;
         lastIndex = -1;
@@ -138,11 +142,14 @@ public final class StaticHostProvider implements HostProvider {
     private InetSocketAddress resolve(InetSocketAddress address) {
         try {
             String curHostString = address.getHostString();
+            // 根据hostname，获取其对应的所有ip地址
             List<InetAddress> resolvedAddresses = new ArrayList<>(Arrays.asList(this.resolver.getAllByName(curHostString)));
             if (resolvedAddresses.isEmpty()) {
                 return address;
             }
+            // 对所有ip地址进行shuffle，这是第二次shuffle
             Collections.shuffle(resolvedAddresses);
+            // 获取shuffle过后的第一个ip地址
             return new InetSocketAddress(resolvedAddresses.get(0), address.getPort());
         } catch (UnknownHostException e) {
             LOG.error("Unable to resolve address: {}", address.toString(), e);
@@ -317,6 +324,15 @@ public final class StaticHostProvider implements HostProvider {
         // and either the probability tells us to connect to one of the new
         // servers or if we already
         // tried all the old servers
+
+        /** oldServers是存放原来server的集合，
+        * newServers是存放扩容server的集合。
+        * 尝试过程与原理：
+        * 1)若当前已经将所有老集合中的server全部尝试了一遍，都没有连接成功。此时若添加进了扩容server的新集合，
+        * 那么就从新集合中进行逐个尝试。
+        * 2)若当前老集合中的server还没有全部尝试完毕，而此时又扩容了新集合，也会先继续从老集合中进行尝试。
+        * 3)若新集合中的也都尝试了一遍，还没有连接成功，则会再从老集合中进行逐个尝试
+         */
         if (((currentIndexNew + 1) < newServers.size()) && (takeNew || (currentIndexOld + 1) >= oldServers.size())) {
             ++currentIndexNew;
             return newServers.get(currentIndexNew);
@@ -331,32 +347,44 @@ public final class StaticHostProvider implements HostProvider {
         return null;
     }
 
+    // 轮询获取要连接的server的地址
+    // 如果所有主机都尝试过一次，则等待spinDelay毫秒。
     public InetSocketAddress next(long spinDelay) {
         boolean needToSleep = false;
         InetSocketAddress addr;
 
         synchronized (this) {
+            // 动态扩缩容reconfigMode
             if (reconfigMode) {
+                // 获取一个server地址
                 addr = nextHostInReconfigMode();
                 if (addr != null) {
                     currentIndex = serverAddresses.indexOf(addr);
+                    // 对获取到的地址进行再次处理：
+                    // 获取到hostname对应的所有ip，进行第二次shuffle，
+                    // 并返回shuflle过后，第一个ip构成的地址
                     return resolve(addr);
                 }
                 //tried all servers and couldn't connect
                 reconfigMode = false;
                 needToSleep = (spinDelay > 0);
             }
+            // reconfigMode为false的情况，即没有扩容，或扩容已经完成，新的配置已经成功加载，
+            // 即变为了一个普通的zk集合了
+            // 轮询
             ++currentIndex;
             if (currentIndex == serverAddresses.size()) {
                 currentIndex = 0;
             }
             addr = serverAddresses.get(currentIndex);
+            // currentIndex == lastIndex 的情况只有一种：zk是单机而不是集群
             needToSleep = needToSleep || (currentIndex == lastIndex && spinDelay > 0);
             if (lastIndex == -1) {
                 // We don't want to sleep on the first ever connect attempt.
                 lastIndex = 0;
             }
         }
+        // 是否需要等待
         if (needToSleep) {
             try {
                 Thread.sleep(spinDelay);

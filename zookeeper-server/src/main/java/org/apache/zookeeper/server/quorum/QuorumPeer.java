@@ -1344,6 +1344,8 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         return zkDb.getDataTreeLastProcessedZxid();
     }
 
+    // 集群对象会含有三种不同的角色对象，如果机器在选举时被表明了是什么角色时
+    // 对应的对象将会被初始化，代表着本机器的角色，执行相应的操作
     public Follower follower;
     public Leader leader;
     public Observer observer;
@@ -1462,20 +1464,29 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             jmxQuorumBean = null;
         }
 
+        // 源码中这里有个流程是用来注册JMX对象的，这里和选举流程无关因此忽略
         try {
             /*
              * Main loop
              */
+            // 正式开始ZK集群执行流程，这里会有三种情况：
+            // 1、如果在选举流程，peerState将一直会是LOOLING，直到集群选举出
+            // Leader；2、当选出Leader后，本机器的peerState将会变成对应的状态
+            // 直到Leader宕机不得不选举出新的Leader；3、每一次新的轮询都代表
+            // 着本机的角色发生了改变，执行的作用也发生改变。
             while (running) {
                 if (unavailableStartTime == 0) {
                     unavailableStartTime = Time.currentElapsedTime();
                 }
 
                 switch (getPeerState()) {
+                // 代表本机正在进行选举流程
                 case LOOKING:
                     LOG.info("LOOKING");
                     ServerMetrics.getMetrics().LOOKING_COUNT.add(1);
 
+                    // 本机是否开启只读模式，有兴趣的可以去看下，本次只分析
+                    // 普通正常的流程
                     if (Boolean.getBoolean("readonlymode.enabled")) {
                         LOG.info("Attempting to start ReadOnlyZooKeeperServer");
 
@@ -1522,18 +1533,25 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         }
                     } else {
                         try {
+
                             reconfigFlagClear();
                             if (shuttingDownLE) {
                                 shuttingDownLE = false;
                                 startLeaderElection();
                             }
+                            // 设置本次投票结果，lookForLeader()方法里面将会
+                            // 一直轮询和集群内的机器进行通信，直到选举出新的
+                            // Leader或者发生了异常情况
                             setCurrentVote(makeLEStrategy().lookForLeader());
                         } catch (Exception e) {
+                            // 如果发生了异常情况则设置本机的状态为选举中
+                            // 以便进入下一次选举流程
                             LOG.warn("Unexpected exception", e);
                             setPeerState(ServerState.LOOKING);
                         }
                     }
                     break;
+                // 代表本机已经确认为Observer角色，正在集群内进行观察
                 case OBSERVING:
                     try {
                         LOG.info("OBSERVING");
@@ -1553,28 +1571,44 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         }
                     }
                     break;
+                // 代表本机已经确认为Follower角色，正在跟随Leader
                 case FOLLOWING:
                     try {
                         LOG.info("FOLLOWING");
+                        // 本机器的上一次轮询确定出了本机器为Follower角色
                         setFollower(makeFollower(logFactory));
+                        // 开始执行Follower角色的工作：跟随Leader机器
                         follower.followLeader();
                     } catch (Exception e) {
                         LOG.warn("Unexpected exception", e);
                     } finally {
+                        // 当本次Follower跟随的集群发生了异常时将会改变本机的
+                        // 角色，重新设置成LOOKING状态选举出新Leader
+                        // 异常情况：1、Leader宕机，导致本集群不得不重新选举；
+                        // 2、本集群内其它的Follower宕机超过半数导致Leader
+                        // 投票数低于总数一半，进行重新选举。
+                        // 如果是本机宕机程序直接死亡，不会进入到Finally块
                         follower.shutdown();
                         setFollower(null);
                         updateServerState();
                     }
                     break;
+                // 代表本机已经确认为Leader角色，正在领导集群内的各个机器
                 case LEADING:
                     LOG.info("LEADING");
                     try {
+                        // 本机器的上一次轮询确定出了本机器为Leader角色
                         setLeader(makeLeader(logFactory));
+                        // 开始执行Leader角色的工作：作为集群中心发送同步命令
                         leader.lead();
+                        // 退出了lead()方法说明集群的Leader发生了变化，需要
+                        // 选举出新的Leader
                         setLeader(null);
                     } catch (Exception e) {
                         LOG.warn("Unexpected exception", e);
                     } finally {
+                        // 关闭当前Leader对象并设置状态LOOKING开始准备下一次
+                        // 选举流程
                         if (leader != null) {
                             leader.shutdown("Forcing shutdown");
                             setLeader(null);
@@ -1585,6 +1619,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                 }
             }
         } finally {
+            // 执行到这说明本机器的ZK服务被关闭，将会关闭机器的对象并退出
             LOG.warn("QuorumPeer main thread exited");
             MBeanRegistry instance = MBeanRegistry.getInstance();
             instance.unregister(jmxQuorumBean);

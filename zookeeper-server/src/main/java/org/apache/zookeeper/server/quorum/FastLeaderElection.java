@@ -201,6 +201,8 @@ public class FastLeaderElection implements Election {
 
     }
 
+    // 将要使用通信对发送消息的消息存储队列集合，通信对发送消息时将会从该集合中
+    // 取出消息对象并使用Socket通信发送给对应的机器
     LinkedBlockingQueue<ToSend> sendqueue;
     LinkedBlockingQueue<Notification> recvqueue;
 
@@ -483,6 +485,7 @@ public class FastLeaderElection implements Election {
         class WorkerSender extends ZooKeeperThread {
 
             volatile boolean stop;
+            // 集群连接管理对象，WorkerSender实际上是该对象的内部类
             QuorumCnxManager manager;
 
             WorkerSender(QuorumCnxManager manager) {
@@ -492,15 +495,21 @@ public class FastLeaderElection implements Election {
             }
 
             public void run() {
+                // 启动通信对的发送信息对象后本方法将会被执行，直到该对象被调用finish()
+                // 方法销毁
                 while (!stop) {
                     try {
+                        // 从消息队列集合中获取需要发送的消息对象，固定阻塞3s，如果
+                        // 没有轮询到则返回null
                         ToSend m = sendqueue.poll(3000, TimeUnit.MILLISECONDS);
+                        // 如果为null说明暂时没有消息发送，继续轮回
                         if (m == null) {
                             continue;
                         }
-
+                        // 如果不为空则说明有需要发送的消息，调用process发送消息对象
                         process(m);
                     } catch (InterruptedException e) {
+                        // 如果轮询集合发生异常则退出
                         break;
                     }
                 }
@@ -513,8 +522,9 @@ public class FastLeaderElection implements Election {
              * @param m     message to send
              */
             void process(ToSend m) {
+                // 将需要发送的消息转换成Socket方便发送的ByteBuffer缓存对象
                 ByteBuffer requestBuffer = buildMsg(m.state.ordinal(), m.leader, m.zxid, m.electionEpoch, m.peerEpoch, m.configData);
-
+                // 通知连接管理对象需要发送requestBuffer对象中的信息
                 manager.toSend(m.sid, requestBuffer);
 
             }
@@ -562,11 +572,18 @@ public class FastLeaderElection implements Election {
 
     }
 
+    // 本机器的集群对象
     QuorumPeer self;
     Messenger messenger;
+    // 选举流程时的逻辑迭代数，每调用一次lookForLeader进行选举时该值会+1
+    // 发送到其它机器上时对应Notification对象的electionEpoch属性
     AtomicLong logicalclock = new AtomicLong(); /* Election instance */
+    // 本机推崇将要当选leader的myid，对应Notification对象的leader，可以看成是
+    // 某个机器的id
     long proposedLeader;
+    // 本机推崇将要当选leader的zxid，对应Notification对象的zxid
     long proposedZxid;
+    // 本机推崇将要当选leader的epoch，对应Notification对象的peerEpoch
     long proposedEpoch;
 
     /**
@@ -596,6 +613,8 @@ public class FastLeaderElection implements Election {
     }
 
     static ByteBuffer buildMsg(int state, long leader, long zxid, long electionEpoch, long epoch, byte[] configData) {
+        // 生成ByteBuffer对象并封装byte[]数组，这里需要特别说明下各个参数和
+        // 在FLE中参数的对应关系
         byte[] requestBytes = new byte[44 + configData.length];
         ByteBuffer requestBuffer = ByteBuffer.wrap(requestBytes);
 
@@ -604,11 +623,17 @@ public class FastLeaderElection implements Election {
          */
 
         requestBuffer.clear();
+        // 对应PeerQuorum中的peerState，此时值为LOOKING
         requestBuffer.putInt(state);
+        // 对应PeerQuorum中的proposedLeader，刚开始选举为本机器的myid
         requestBuffer.putLong(leader);
+        // 对应PeerQuorum中的proposedZxid，刚开始选举为本机器的zxid
         requestBuffer.putLong(zxid);
+        // 对应PeerQuorum中的logicclock，代表本次选举的迭代数
         requestBuffer.putLong(electionEpoch);
+        // 对应PeerQuorum中的proposedEpoch，选举开始为本机器的currentEpoch
         requestBuffer.putLong(epoch);
+        // 默认版本信息，接收到后会设置为接收消息的version属性
         requestBuffer.putInt(Notification.CURRENTVERSION);
         requestBuffer.putInt(configData.length);
         requestBuffer.put(configData);
@@ -689,16 +714,18 @@ public class FastLeaderElection implements Election {
      * Send notifications to all peers upon a change in our vote
      */
     private void sendNotifications() {
+        // 轮询配置文件中所配置的各个Server信息，并向每台机器发送通知
         for (long sid : self.getCurrentAndNextConfigVoters()) {
             QuorumVerifier qv = self.getQuorumVerifier();
+            // 将本机器的信息封装，并发给myid为sid的机器
             ToSend notmsg = new ToSend(
                 ToSend.mType.notification,
-                proposedLeader,
-                proposedZxid,
-                logicalclock.get(),
-                QuorumPeer.ServerState.LOOKING,
-                sid,
-                proposedEpoch,
+                proposedLeader, // 第一次发送此值为本机器的myid
+                proposedZxid, // 第一次发送此值为本机器的zxid
+                logicalclock.get(), // 第一次发送此值为本机器的logicalclock
+                QuorumPeer.ServerState.LOOKING, // 本机器流程为LOOKING
+                sid, // 目标机器的myid
+                proposedEpoch, // 第一次发送此值为本机器的currentEpoch
                 qv.toString().getBytes(UTF_8));
 
             LOG.debug(
@@ -710,7 +737,8 @@ public class FastLeaderElection implements Election {
                 sid,
                 self.getId(),
                 Long.toHexString(proposedEpoch));
-
+            // 放入sendqueue集合中以便本选举对象的WorkerSender发送这些
+            // 通知消息给其它的机器
             sendqueue.offer(notmsg);
         }
     }
@@ -820,7 +848,8 @@ public class FastLeaderElection implements Election {
             Long.toHexString(zxid),
             proposedLeader,
             Long.toHexString(proposedZxid));
-
+        // 更新本机器记录的Leader信息，投票前把这些信息改成本机器的，即先把票
+        // 投给自己
         proposedLeader = leader;
         proposedZxid = zxid;
         proposedEpoch = epoch;
@@ -918,6 +947,7 @@ public class FastLeaderElection implements Election {
             self.jmxLeaderElectionBean = null;
         }
 
+        // 记录FLE算法的开始时间
         self.start_fle = Time.currentElapsedTime();
         try {
             /*
@@ -925,6 +955,8 @@ public class FastLeaderElection implements Election {
              * if v.electionEpoch == logicalclock. The current participant uses recvset to deduce on whether a majority
              * of participants has voted for it.
              */
+            // 本集合key为leaderId，value为对应id的投票信息，集合将会记录
+            // 本次投票的各个机器投票情况
             Map<Long, Vote> recvset = new HashMap<Long, Vote>();
 
             /*
@@ -934,12 +966,18 @@ public class FastLeaderElection implements Election {
              * outofelection to learn which participant is the leader if it arrives late (i.e., higher logicalclock than
              * the electionEpoch of the received notifications) in a leader election.
              */
+            // 新加入的机器用来记录集群内其它机器的投票情况
             Map<Long, Vote> outofelection = new HashMap<Long, Vote>();
 
+            // 每次轮询其它机器发来消息的间隔时间，固定200毫秒执行一次
             int notTimeout = minNotificationInterval;
 
             synchronized (this) {
+                // 逻辑选举次数+1，代表本机器有一次执行了重新选举Leader的操作
                 logicalclock.incrementAndGet();
+                // 投票前先把本机器的投票信息投给自己，getInitId()为本机器的
+                // myid值，getInitLastLoggedZxid()为本机器的zxid值
+                // getPeerEpoch()为本机器的currentEpoch值
                 updateProposal(getInitId(), getInitLastLoggedZxid(), getPeerEpoch());
             }
 
@@ -947,6 +985,12 @@ public class FastLeaderElection implements Election {
                 "New election. My id = {}, proposed zxid=0x{}",
                 self.getId(),
                 Long.toHexString(proposedZxid));
+            // 对集群内的各个机器发送消息通知，告诉他们我选举自己当选Leader
+            // 此时各个机器的通信对已经创建完毕，因此可以将消息发送给集群内的
+            // 各个机器，结果为A->B、A->C通知A当选Leader，B->A，B->C通知B当选
+            // Leader，C->B、C->A通知C当选Leader，例子中的三台机器每台机器都
+            // 会向集群内其它两台机器发送当选本机器为Leqader的消息通知，当然
+            // 也会通知自己，但是通知自己不会经过网络通信
             sendNotifications();
 
             SyncedLearnerTracker voteSet = null;
@@ -954,12 +998,16 @@ public class FastLeaderElection implements Election {
             /*
              * Loop in which we exchange notifications until we find a leader
              */
-
+            // 发完通知消息后开始轮询其它机器的消息
             while ((self.getPeerState() == ServerState.LOOKING) && (!stop)) {
                 /*
                  * Remove next notification from queue, times out after 2 times
                  * the termination time
                  */
+                // 轮询集合内是否有其它机器发来的消息，在本次三台机器的集群中，
+                // recvqueue.poll()方法一定可以轮询出三个响应消息，其中一个
+                // 消息通知为本系统在前面的sendNotifications()方法发出的，没
+                // 经过网络通信，而是直接放在了本机的集合中等待处理
                 Notification n = recvqueue.poll(notTimeout, TimeUnit.MILLISECONDS);
 
                 /*

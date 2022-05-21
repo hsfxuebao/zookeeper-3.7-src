@@ -347,20 +347,27 @@ class ZKWatchManager implements ClientWatchManager {
         Watcher.Event.EventType type,
         String clientPath
     ) {
+        // 将要返回的监听器集合
         final Set<Watcher> result = new HashSet<>();
 
         switch (type) {
         case None:
             if (defaultWatcher != null) {
+                // 新建连接相关的事件类型都是None，不管是连接成功还是连接失败超时
+                // 将默认监听器defaultWatcher添加到result中，这也就是为什么在
+                // 新建ZooKeeper连接时传入Watcher新建连接相关的事件这个都会收到
                 result.add(defaultWatcher);
             }
 
+            // 判断是否使用完之后删除，需要开关打开且ZK状态不是SyncConnected
             boolean clear = disableAutoWatchReset && state != Watcher.Event.KeeperState.SyncConnected;
+            // 将dataWatches中的监听器添加到result集合中
             synchronized (dataWatches) {
                 for (Set<Watcher> ws : dataWatches.values()) {
                     result.addAll(ws);
                 }
                 if (clear) {
+                    // 如果需要删除则把缓存的全删了
                     dataWatches.clear();
                 }
             }
@@ -398,6 +405,7 @@ class ZKWatchManager implements ClientWatchManager {
             return result;
         case NodeDataChanged:
         case NodeCreated:
+            // 节点变更类型事件，只有dataWatches和existWatches会参与
             synchronized (dataWatches) {
                 addTo(dataWatches.remove(clientPath), result);
             }
@@ -407,12 +415,14 @@ class ZKWatchManager implements ClientWatchManager {
             addPersistentWatches(clientPath, result);
             break;
         case NodeChildrenChanged:
+            // 子节点变更事件，只有childWatches参与
             synchronized (childWatches) {
                 addTo(childWatches.remove(clientPath), result);
             }
             addPersistentWatches(clientPath, result);
             break;
         case NodeDeleted:
+            // 节点被删除三种类型都会受到影响，操作方式和前面类似直接略过
             synchronized (dataWatches) {
                 addTo(dataWatches.remove(clientPath), result);
             }

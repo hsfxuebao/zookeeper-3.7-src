@@ -58,6 +58,7 @@ public class NIOServerCnxn extends ServerCnxn {
 
     private static final Logger LOG = LoggerFactory.getLogger(NIOServerCnxn.class);
 
+    // 这三个对象便不用做过多介绍了
     private final NIOServerCnxnFactory factory;
 
     private final SocketChannel sock;
@@ -65,13 +66,14 @@ public class NIOServerCnxn extends ServerCnxn {
     private final SelectorThread selectorThread;
 
     private final SelectionKey sk;
-
+    // 是否已经初始化，默认值为false
     private boolean initialized;
-
+    // 用来读取请求长度的buffer对象
     private final ByteBuffer lenBuffer = ByteBuffer.allocate(4);
-
+    // 实际接受请求长度的buffer对象
     protected ByteBuffer incomingBuffer = lenBuffer;
 
+    // 写操作使用的ByteBuffer集合
     private final Queue<ByteBuffer> outgoingBuffers = new LinkedBlockingQueue<ByteBuffer>();
 
     private int sessionTimeout;
@@ -80,6 +82,8 @@ public class NIOServerCnxn extends ServerCnxn {
      * This is the id that uniquely identifies the session of a client. Once
      * this session is no longer active, the ephemeral nodes will go away.
      */
+    // 本连接对应的sessionId，刚开始sessionId不会有，只有当ZK的Server端处理了
+    // ConnectRequest之后才会被赋值
     private long sessionId;
 
     /**
@@ -173,6 +177,7 @@ public class NIOServerCnxn extends ServerCnxn {
 
     /** Read the request payload (everything following the length prefix) */
     private void readPayload() throws IOException, InterruptedException, ClientCnxnLimitException {
+        // 前面已经判断过，这里一定不会成立
         if (incomingBuffer.remaining() != 0) { // have we read length bytes?
             int rc = sock.read(incomingBuffer); // sock is non-blocking, so ok
             if (rc < 0) {
@@ -181,14 +186,20 @@ public class NIOServerCnxn extends ServerCnxn {
         }
 
         if (incomingBuffer.remaining() == 0) { // have we read length bytes?
+            // 进行接收报文数量+1和更新Server端接收报文数量+1的操作
             incomingBuffer.flip();
             packetReceived(4 + incomingBuffer.remaining());
+            // 第一次进来肯定是false
             if (!initialized) {
+                // 因此这里肯定会进入调用处理ConnectRequest的方法中
                 readConnectRequest();
             } else {
+                // 这里是处理其它Request的方法，此次暂不分析，后续分析ping和
+                // 其它操作时再来分析此方法中的流程
                 readRequest();
             }
             lenBuffer.clear();
+            // 处理完这次请求后再将incomingBuffer复原
             incomingBuffer = lenBuffer;
         }
     }
@@ -220,6 +231,8 @@ public class NIOServerCnxn extends ServerCnxn {
     }
 
     void handleWrite(SelectionKey k) throws IOException {
+        // 如果ByteBuffer集合不为空才进入，新建连接时如果响应没有一次性
+        // 发送完剩余的会被放在outgoingBuffers集合中依次发送出去
         if (outgoingBuffers.isEmpty()) {
             return;
         }
@@ -230,6 +243,7 @@ public class NIOServerCnxn extends ServerCnxn {
          * with data from the non-direct buffers that we need to
          * send.
          */
+        // 给发送的ByteBuffer对象分配空间，大小为64 * 1024字节
         ByteBuffer directBuffer = NIOServerCnxnFactory.getDirectBuffer();
         if (directBuffer == null) {
             ByteBuffer[] bufferList = new ByteBuffer[outgoingBuffers.size()];
@@ -253,7 +267,8 @@ public class NIOServerCnxn extends ServerCnxn {
             }
         } else {
             directBuffer.clear();
-
+            // 这里执行的操作是把已经发送过的数据剔除掉
+            // 留下未发送的数据截取下来重新发送
             for (ByteBuffer b : outgoingBuffers) {
                 if (directBuffer.remaining() < b.remaining()) {
                     /*
@@ -271,8 +286,13 @@ public class NIOServerCnxn extends ServerCnxn {
                  * copy
                  */
                 int p = b.position();
+                // 将未发送的数据放入directBuffer中
                 directBuffer.put(b);
+                // 更新outgoingBuffers中的ByteBuffer对象属性，以便
+                // 后续使用
                 b.position(p);
+                // 如果directBuffer的空间都被占用光了，则直接停止从
+                // outgoingBuffers集合中获取
                 if (directBuffer.remaining() == 0) {
                     break;
                 }
@@ -282,12 +302,15 @@ public class NIOServerCnxn extends ServerCnxn {
              * 0. This sets us up for the write.
              */
             directBuffer.flip();
-
+            // 发送directBuffer中的数据
             int sent = sock.write(directBuffer);
 
             ByteBuffer bb;
 
             // Remove the buffers that we have sent
+            // 这部分的循环便是再次判断前面使用过的对象
+            // 看这些对象是否已经发送完，根据position信息判断如果发送完
+            // 则从outgoingBuffers集合中移除
             while ((bb = outgoingBuffers.peek()) != null) {
                 if (bb == ServerCnxnFactory.closeConn) {
                     throw new CloseRequestException("close requested", DisconnectReason.CLIENT_CLOSED_CONNECTION);
@@ -295,6 +318,8 @@ public class NIOServerCnxn extends ServerCnxn {
                 if (bb == packetSentinel) {
                     packetSent();
                 }
+                // 如果到此大于0，说明前面的数据已经填充满
+                // 直接退出循环
                 if (sent < bb.remaining()) {
                     /*
                      * We only partially sent this buffer, so we update
@@ -304,6 +329,8 @@ public class NIOServerCnxn extends ServerCnxn {
                     break;
                 }
                 /* We've sent the whole buffer, so drop the buffer */
+                // 执行到这里说明ByteBuffer对象已经发送完毕，可以更新
+                // 发送状态并从将其从outgoingBuffers中移除
                 sent -= bb.remaining();
                 outgoingBuffers.remove();
             }
@@ -322,18 +349,24 @@ public class NIOServerCnxn extends ServerCnxn {
      */
     void doIO(SelectionKey k) throws InterruptedException {
         try {
+            // 进行操作前需要判断Socket是否被关闭
             if (!isSocketOpen()) {
                 LOG.warn("trying to do i/o on a null socket for session: 0x{}", Long.toHexString(sessionId));
 
                 return;
             }
+            // 判断读事件
             if (k.isReadable()) {
+                // 从Socket中先读取数据，注意的是incomingBuffer容量只有4字节
                 int rc = sock.read(incomingBuffer);
+                // 读取长度异常
                 if (rc < 0) {
                     handleFailedRead();
                 }
+                // 读取完毕开始进行处理
                 if (incomingBuffer.remaining() == 0) {
                     boolean isPayload;
+                    // 当这两个完全相等说明已经是下一次连接了，新建时无需分析
                     if (incomingBuffer == lenBuffer) { // start of next request
                         incomingBuffer.flip();
                         isPayload = readLength(k);
@@ -343,6 +376,7 @@ public class NIOServerCnxn extends ServerCnxn {
                         isPayload = true;
                     }
                     if (isPayload) { // not the case for 4letterword
+                        // 读取具体连接的地方
                         readPayload();
                     } else {
                         // four letter words take care
@@ -351,7 +385,9 @@ public class NIOServerCnxn extends ServerCnxn {
                     }
                 }
             }
+            // 写事件类型
             if (k.isWritable()) {
+                // todo
                 handleWrite(k);
 
                 if (!initialized && !getReadInterest() && !getWriteInterest()) {
@@ -423,7 +459,9 @@ public class NIOServerCnxn extends ServerCnxn {
         if (!isZKServerRunning()) {
             throw new IOException("ZooKeeperServer not running");
         }
+        // 调用ZooKeeperServer的方法处理连接请求
         zkServer.processConnectRequest(this, incomingBuffer);
+        // 当前面执行完毕后说明已经初始化完成了
         initialized = true;
     }
 

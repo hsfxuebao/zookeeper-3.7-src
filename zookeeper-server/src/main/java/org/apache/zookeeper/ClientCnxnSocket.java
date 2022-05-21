@@ -134,7 +134,7 @@ abstract class ClientCnxnSocket {
                 LOG.trace("readConnectResult {} {}", incomingBuffer.remaining(), buf.toString());
             }
         }
-
+        // 使用读取到的ByteBuffer对象反序列化得到ConnectResponse响应
         ByteBufferInputStream bbis = new ByteBufferInputStream(incomingBuffer);
         BinaryInputArchive bbia = BinaryInputArchive.getArchive(bbis);
         ConnectResponse conRsp = new ConnectResponse();
@@ -143,6 +143,7 @@ abstract class ClientCnxnSocket {
         // read "is read-only" flag
         boolean isRO = false;
         try {
+            // 读取readOnly属性
             isRO = bbia.readBool("readOnly");
         } catch (IOException e) {
             // this is ok -- just a packet from an old server which
@@ -151,6 +152,7 @@ abstract class ClientCnxnSocket {
         }
 
         this.sessionId = conRsp.getSessionId();
+        // 开始进行连接成功的操作
         sendThread.onConnected(conRsp.getTimeOut(), this.sessionId, conRsp.getPasswd(), isRO);
     }
 

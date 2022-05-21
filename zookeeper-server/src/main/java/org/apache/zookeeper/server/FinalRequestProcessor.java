@@ -109,6 +109,7 @@ public class FinalRequestProcessor implements RequestProcessor {
     }
 
     private ProcessTxnResult applyRequest(Request request) {
+        // todo
         ProcessTxnResult rc = zks.processTxn(request);
 
         // ZOOKEEPER-558:
@@ -154,10 +155,12 @@ public class FinalRequestProcessor implements RequestProcessor {
             }
             ZooTrace.logRequest(LOG, traceMask, 'E', request, "");
         }
+        // 直接开始处理Request请求
         ProcessTxnResult rc = null;
         if (!request.isThrottled()) {
           rc = applyRequest(request);
         }
+        // 如果执行到这里连接对象还为空则直接退出
         if (request.cnxn == null) {
             return;
         }
@@ -168,6 +171,7 @@ public class FinalRequestProcessor implements RequestProcessor {
         String lastOp = "NA";
         // Notify ZooKeeperServer that the request has finished so that it can
         // update any request accounting/throttling limits
+        // 执行中的数量减一
         zks.decInProcess();
         zks.requestFinished(request);
         Code err = Code.OK;
@@ -175,6 +179,7 @@ public class FinalRequestProcessor implements RequestProcessor {
         String path = null;
         int responseSize = 0;
         try {
+            // 如果发生了异常则直接抛出
             if (request.getHdr() != null && request.getHdr().getType() == OpCode.error) {
                 AuditHelper.addAuditLog(request, rc, true);
                 /*
@@ -184,6 +189,7 @@ public class FinalRequestProcessor implements RequestProcessor {
                  * it will have the correct error code, so we should use that
                  * and report to user
                  */
+                // 如果是单个的操作发生了异常抛出
                 if (request.getException() != null) {
                     throw request.getException();
                 } else {
@@ -210,7 +216,7 @@ public class FinalRequestProcessor implements RequestProcessor {
             }
 
             AuditHelper.addAuditLog(request, rc);
-
+            // 开始根据Request的操作类型进行相应的处理
             switch (request.type) {
             case OpCode.ping: {
                 lastOp = "PING";
@@ -220,10 +226,13 @@ public class FinalRequestProcessor implements RequestProcessor {
                 return;
             }
             case OpCode.createSession: {
+                // 最后的操作类型
                 lastOp = "SESS";
+                // 更新状态
                 updateStats(request, lastOp, lastZxid);
-
+                // 最后调用这个方法来完成session的初始化以及响应
                 zks.finishSessionInit(request.cnxn, true);
+                // 直接退出方法
                 return;
             }
             case OpCode.multi: {
@@ -689,7 +698,9 @@ public class FinalRequestProcessor implements RequestProcessor {
             return;
         }
         long currentTime = Time.currentElapsedTime();
+        // 更新服务状态
         zks.serverStats().updateLatency(request, currentTime);
+        // 更新连接对象的状态和属性
         request.cnxn.updateStatsForResponse(request.cxid, lastZxid, lastOp, request.createTime, currentTime);
     }
 

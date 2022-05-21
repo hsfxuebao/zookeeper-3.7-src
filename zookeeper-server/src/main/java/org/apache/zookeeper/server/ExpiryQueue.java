@@ -34,6 +34,8 @@ import org.apache.zookeeper.common.Time;
  */
 public class ExpiryQueue<E> {
 
+    // elemMap集合的key为session，value为该session的过期时间，
+    // 即该session当前所在的会话桶id
     private final ConcurrentHashMap<E, Long> elemMap = new ConcurrentHashMap<E, Long>();
     /**
      * The maximum number of buckets is equal to max timeout/expirationInterval,
@@ -81,39 +83,61 @@ public class ExpiryQueue<E> {
      * @return time at which the element is now set to expire if
      *                 changed, or null if unchanged
      */
+    // 当client与server有交互时（连接请求/读写操作/心跳），该方法就会被调用
+    // 当zk server启动时会将磁盘中的session恢复到内存，也会调用该方法
+    // 该方法在做的是会话换桶操作
     public Long update(E elem, int timeout) {
+        // elemMap集合的key为session，value为该session的过期时间，
+        // 即该session当前所在的会话桶id
         Long prevExpiryTime = elemMap.get(elem);
         long now = Time.currentElapsedTime();
+        // 计算本次交互应该将会话放入到哪个会话桶
         Long newExpiryTime = roundToNextInterval(now + timeout);
 
+        // 若之前所在会话桶id与本次交互计算的会话桶id相同，
+        // 则无需换桶，即什么也不用做
         if (newExpiryTime.equals(prevExpiryTime)) {
             // No change, so nothing to update
             return null;
         }
 
+        // ---------- 代码能走到这里，说明需要换桶了。 --------------
+        // 换桶由两步操作完成：将会话放入到新桶；将会话从老桶中清除
+
         // First add the elem to the new expiry time bucket in expiryMap.
+        // 从会话桶集合中获取当前的会话桶，若为null，则创建一个新的会话桶
         Set<E> set = expiryMap.get(newExpiryTime);
         if (set == null) {
             // Construct a ConcurrentHashSet using a ConcurrentHashMap
+            // 创建会话桶set
             set = Collections.newSetFromMap(new ConcurrentHashMap<E, Boolean>());
             // Put the new set in the map, but only if another thread
             // hasn't beaten us to it
+            // 将新建的会话桶放入到会话桶集合
             Set<E> existingSet = expiryMap.putIfAbsent(newExpiryTime, set);
             if (existingSet != null) {
                 set = existingSet;
             }
         }
+        // 将会话放入到会话桶
         set.add(elem);
 
         // Map the elem to the new expiry time. If a different previous
         // mapping was present, clean up the previous expiry bucket.
+        // 将会话与会话桶id的对应关系放入到elemMap，并获取到该会话之前所在的会话桶id
         prevExpiryTime = elemMap.put(elem, newExpiryTime);
+        // 若当前会话桶id与之前会话桶id不相同，说明需要换桶。
+        // 而前面已经将会话放到了新的会话桶，所以这里要将会话从老桶中清除
         if (prevExpiryTime != null && !newExpiryTime.equals(prevExpiryTime)) {
+            // 获取到之前的会话桶
             Set<E> prevSet = expiryMap.get(prevExpiryTime);
             if (prevSet != null) {
+                // 将会话从老会话桶中清除
                 prevSet.remove(elem);
             }
         }
+        // 返回当前交互引发的会话所在的会话桶id，
+        // 即当前会话的真正过期时间点
         return newExpiryTime;
     }
 

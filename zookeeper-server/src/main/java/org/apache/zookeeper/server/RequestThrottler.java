@@ -61,6 +61,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
 
     private static final Logger LOG = LoggerFactory.getLogger(RequestThrottler.class);
 
+    //
     private final LinkedBlockingQueue<Request> submittedRequests = new LinkedBlockingQueue<Request>();
 
     private final ZooKeeperServer zks;
@@ -185,6 +186,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                       request.setIsThrottled(true);
                       ServerMetrics.getMetrics().THROTTLED_OPS.add(1);
                     }
+                    // todo
                     zks.submitRequestNow(request);
                 }
             }
@@ -245,6 +247,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
             dropRequest(request);
         } else {
             request.requestThrottleQueueTime = Time.currentElapsedTime();
+            // todo
             submittedRequests.add(request);
         }
     }

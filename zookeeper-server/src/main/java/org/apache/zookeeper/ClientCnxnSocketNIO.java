@@ -86,18 +86,27 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
                     recvCount.getAndIncrement();
                     readLength();
                 } else if (!initialized) {
+                    // 新建连接将会跑到这里来，因为此时Client端的initialized
+                    // 还是为false，尚未初始化完成
+                    // 开始读取连接响应结果
                     readConnectResult();
+                    // 开启Socket的OP_READ操作
                     enableRead();
+                    // 查看outgoingQueue队列是否有可读包数据
                     if (findSendablePacket(outgoingQueue, sendThread.tunnelAuthInProgress()) != null) {
                         // Since SASL authentication has completed (if client is configured to do so),
                         // outgoing packets waiting in the outgoingQueue can now be sent.
+                        // 如果有的话则开启OP_WRITE操作，准备下次轮询时处理
+                        // 写事件
                         enableWrite();
                     }
+                    // 设置initialized属性初始化完成并更新lastHeard属性
                     lenBuffer.clear();
                     incomingBuffer = lenBuffer;
                     updateLastHeard();
                     initialized = true;
                 } else {
+                    // 这里是当新建连接成功后普通的操作响应处理逻辑
                     sendThread.readResponse(incomingBuffer);
                     lenBuffer.clear();
                     incomingBuffer = lenBuffer;

@@ -101,8 +101,9 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
      */
     private static boolean failCreate = false;
 
+    // 本RequestProcessor中用来暂时保存需要处理的Request，轮询获取请求处理
     LinkedBlockingQueue<Request> submittedRequests = new LinkedBlockingQueue<Request>();
-
+    // 本RequestProcessor的下一个RequestProcessor对象
     private final RequestProcessor nextProcessor;
     private final boolean digestEnabled;
     private DigestCalculator digestCalculator;
@@ -139,6 +140,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         try {
             while (true) {
                 ServerMetrics.getMetrics().PREP_PROCESSOR_QUEUE_SIZE.add(submittedRequests.size());
+                // 轮询从submittedRequests集合中获取Request对象
                 Request request = submittedRequests.take();
                 ServerMetrics.getMetrics().PREP_PROCESSOR_QUEUE_TIME
                     .add(Time.currentElapsedTime() - request.prepQueueStartTime);
@@ -149,11 +151,13 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                     }
                     ZooTrace.logRequest(LOG, traceMask, 'P', request, "");
                 }
+                // 如果requestOfDeath代表ZK已经关闭，因此退出循环
                 if (Request.requestOfDeath == request) {
                     break;
                 }
 
                 request.prepStartTime = Time.currentElapsedTime();
+                // todo 开始处理正常的Request
                 pRequest(request);
             }
         } catch (Exception e) {
@@ -319,6 +323,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
      */
     protected void pRequest2Txn(int type, long zxid, Request request, Record record, boolean deserialize) throws KeeperException, IOException, RequestProcessorException {
         if (request.getHdr() == null) {
+            // 为请求创建事务头TxnHeader对象
             request.setHdr(new TxnHeader(request.sessionId, request.cxid, zxid,
                     Time.currentWallTime(), type));
         }
@@ -576,12 +581,16 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             setTxnDigest(request, nodeRecord.precalculatedDigest);
             addChangeRecord(nodeRecord);
             break;
+        // 创建session
         case OpCode.createSession:
             request.request.rewind();
+            // 此时的to实际上就是sessionTimeout
             int to = request.request.getInt();
+            // 使用sessionTimeout创建CreateSessionTxn对象
             request.setTxn(new CreateSessionTxn(to));
             request.request.rewind();
             // only add the global session tracker but not to ZKDb
+            // 根据sessionid和sessionTimeout再次新增session信息
             zks.sessionTracker.trackSession(request.sessionId, to);
             zks.setOwner(request.sessionId, request.getOwner());
             break;
@@ -776,12 +785,14 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         request.setTxn(null);
 
         if (!request.isThrottled()) {
+            // todo
           pRequestHelper(request);
         }
 
         request.zxid = zks.getZxid();
         long timeFinishedPrepare = Time.currentElapsedTime();
         ServerMetrics.getMetrics().PREP_PROCESS_TIME.add(timeFinishedPrepare - request.prepStartTime);
+        // 调用下个RequestProcessor来处理Request
         nextProcessor.processRequest(request);
         ServerMetrics.getMetrics().PROPOSAL_PROCESS_TIME.add(Time.currentElapsedTime() - timeFinishedPrepare);
     }
@@ -904,6 +915,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             case OpCode.createSession:
             case OpCode.closeSession:
                 if (!request.isLocalSession()) {
+                    // 直接处理事务
                     pRequest2Txn(request.type, zks.getNextZxid(), request, null, true);
                 }
                 break;
@@ -1064,6 +1076,8 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
 
     public void processRequest(Request request) {
         request.prepQueueStartTime = Time.currentElapsedTime();
+        // RequestProcessor的实现方法，由于内部使用轮询方式从submittedRequests
+        // 集合获取数据，因此在这里直接把Request添加到集合中即可
         submittedRequests.add(request);
         ServerMetrics.getMetrics().PREP_PROCESSOR_QUEUED.add(1);
     }

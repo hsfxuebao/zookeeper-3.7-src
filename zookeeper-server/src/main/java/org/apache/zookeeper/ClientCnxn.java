@@ -504,7 +504,7 @@ public class ClientCnxn {
     }
 
     class EventThread extends ZooKeeperThread {
-
+        // 将要处理的ZK事件集合
         private final LinkedBlockingQueue<Object> waitingEvents = new LinkedBlockingQueue<Object>();
 
         /** This is really the queued session state until the event
@@ -526,6 +526,8 @@ public class ClientCnxn {
         }
 
         private void queueEvent(WatchedEvent event, Set<Watcher> materializedWatchers) {
+            // SendThread就是调用这个方法将对应的ZK事件传入进来开始ZK事件的生命周期
+            // 如果session状态和当前一样且事件类型没有则直接退出，无需处理
             if (event.getType() == EventType.None && sessionState == event.getState()) {
                 return;
             }
@@ -537,8 +539,11 @@ public class ClientCnxn {
             } else {
                 watchers = new HashSet<>(materializedWatchers);
             }
+            // 使用传入的ZK事件和ClientWatchManager生成事件和监听器的绑定对象
             WatcherSetEventPair pair = new WatcherSetEventPair(watchers, event);
             // queue the pair (watch set & event) for later processing
+            // 将事件和监听器的绑定对象添加到waitingEvents集合中，这个集合类型只
+            // 会是WatcherSetEventPair或者Packet
             waitingEvents.add(pair);
         }
 
@@ -571,14 +576,19 @@ public class ClientCnxn {
             try {
                 isRunning = true;
                 while (true) {
+                    // 轮询waitingEvents集合，取出其中的事件对象
                     Object event = waitingEvents.take();
+                    // eventOfDeath为关闭事件
                     if (event == eventOfDeath) {
                         wasKilled = true;
                     } else {
+                        // 不是关闭事件则开始处理事件
                         processEvent(event);
                     }
                     if (wasKilled) {
                         synchronized (waitingEvents) {
+                            // 如果是关闭事件则会等waitingEvents全部处理之后再把
+                            // EventThread设置为停止运行且退出循环
                             if (waitingEvents.isEmpty()) {
                                 isRunning = false;
                                 break;
@@ -598,6 +608,9 @@ public class ClientCnxn {
                 if (event instanceof WatcherSetEventPair) {
                     // each watcher will process the event
                     WatcherSetEventPair pair = (WatcherSetEventPair) event;
+                    // 如果是正常的WatcherSetEventPair类型则直接取出里面所有的
+                    // 监听器传入绑定的事件依次执行，这个步骤便是对应我们自己开发
+                    // 的Watcher回调
                     for (Watcher watcher : pair.watchers) {
                         try {
                             watcher.process(pair.event);
@@ -1479,11 +1492,15 @@ public class ClientCnxn {
             long _sessionId,
             byte[] _sessionPasswd,
             boolean isRO) throws IOException {
+            // _negotiatedSessionTimeout便是Client端和Server端互相协商获得的
+            // sessionTimeout过期时间
             negotiatedSessionTimeout = _negotiatedSessionTimeout;
+            // 时间小于等于0说明连接失败了
             if (negotiatedSessionTimeout <= 0) {
                 changeZkState(States.CLOSED);
-
+                // 发送ZK过期事件
                 eventThread.queueEvent(new WatchedEvent(Watcher.Event.EventType.None, Watcher.Event.KeeperState.Expired, null));
+                // 并且发送停止服务事件
                 eventThread.queueEventOfDeath();
 
                 String warnInfo = String.format(
@@ -1497,12 +1514,15 @@ public class ClientCnxn {
                 LOG.error("Read/write client got connected to read-only server");
             }
 
+            // 接下来便是设值了，具体的值在这里都可以看到
             readTimeout = negotiatedSessionTimeout * 2 / 3;
             connectTimeout = negotiatedSessionTimeout / hostProvider.size();
             hostProvider.onConnected();
             sessionId = _sessionId;
             sessionPasswd = _sessionPasswd;
+            // 根据Server端传来的属性设值状态
             changeZkState((isRO) ? States.CONNECTEDREADONLY : States.CONNECTED);
+
             seenRwServerBefore |= !isRO;
             LOG.info(
                 "Session establishment complete on server {}, session id = 0x{}, negotiated timeout = {}{}",
@@ -1510,7 +1530,9 @@ public class ClientCnxn {
                 Long.toHexString(sessionId),
                 negotiatedSessionTimeout,
                 (isRO ? " (READ-ONLY mode)" : ""));
+            // 确定等下要发送的事件类型
             KeeperState eventState = (isRO) ? KeeperState.ConnectedReadOnly : KeeperState.SyncConnected;
+            // 使用EventThread线程对象发布监听事件
             eventThread.queueEvent(new WatchedEvent(Watcher.Event.EventType.None, eventState, null));
         }
 

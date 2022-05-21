@@ -56,6 +56,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
     private static final Request REQUEST_OF_DEATH = Request.requestOfDeath;
 
     /** The number of log entries to log before starting a snapshot */
+    // Server端快照的数量
     private static int snapCount = ZooKeeperServer.getSnapCount();
 
     /**
@@ -66,15 +67,18 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
     /**
      * Random numbers used to vary snapshot timing
      */
+    // 在回滚前的log数量，随机生成的
     private int randRoll;
     private long randSize;
 
+    // 本RequestProcessor中用来暂时保存需要处理的Request，轮询获取请求处理
     private final BlockingQueue<Request> queuedRequests = new LinkedBlockingQueue<Request>();
 
     private final Semaphore snapThreadMutex = new Semaphore(1);
 
     private final ZooKeeperServer zks;
 
+    // 本RequestProcessor的下一个RequestProcessor对象
     private final RequestProcessor nextProcessor;
 
     /**
@@ -82,6 +86,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
      * disk. Basically this is the list of SyncItems whose callbacks will be
      * invoked after flush returns successfully.
      */
+    // 保存的是已经被写入磁盘但是待刷新的事务
     private final Queue<Request> toFlush;
     private long lastFlushTime;
 
@@ -143,6 +148,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
     private boolean shouldSnapshot() {
         int logCount = zks.getZKDatabase().getTxnCount();
         long logSize = zks.getZKDatabase().getTxnSize();
+        // 如果日志的数量大于某个临界点，则生成一次快照
         return (logCount > (snapCount / 2 + randRoll))
                || (snapSizeInBytes > 0 && logSize > (snapSizeInBytes / 2 + randSize));
     }
@@ -163,13 +169,14 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                 ServerMetrics.getMetrics().SYNC_PROCESSOR_QUEUE_SIZE.add(queuedRequests.size());
 
                 long pollTime = Math.min(zks.getMaxWriteQueuePollTime(), getRemainingDelay());
+                // 从queuedRequests获取Request
                 Request si = queuedRequests.poll(pollTime, TimeUnit.MILLISECONDS);
                 if (si == null) {
                     /* We timed out looking for more writes to batch, go ahead and flush immediately */
                     flush();
                     si = queuedRequests.take();
                 }
-
+                // 如果已经结束则退出循环
                 if (si == REQUEST_OF_DEATH) {
                     break;
                 }
@@ -178,7 +185,9 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                 ServerMetrics.getMetrics().SYNC_PROCESSOR_QUEUE_TIME.add(startProcessTime - si.syncQueueStartTime);
 
                 // track the number of records written to the log
+                // 将Request写入到log中
                 if (!si.isThrottled() && zks.getZKDatabase().append(si)) {
+                    // todo
                     if (shouldSnapshot()) {
                         resetSnapshotStats();
                         // roll the log
@@ -204,7 +213,10 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                     // optimization for read heavy workloads
                     // iff this is a read or a throttled request(which doesn't need to be written to the disk),
                     // and there are no pending flushes (writes), then just pass this to the next processor
+                    // 如果所有的事务都处理完则使用nextProcessor
+                    // 开始进行下一步处理
                     if (nextProcessor != null) {
+                        // 进行处理
                         nextProcessor.processRequest(si);
                         if (nextProcessor instanceof Flushable) {
                             ((Flushable) nextProcessor).flush();
@@ -212,7 +224,11 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                     }
                     continue;
                 }
+                // 如果前面两个条件都不满足，则把Request添加到待刷新的
+                // 事务集合中
                 toFlush.add(si);
+                // 当待刷事务到达了1000个，则把集合中的所有事务全都
+                // 刷掉并使用nextProcessor依次进行处理
                 if (shouldFlush()) {
                     flush();
                 }
@@ -274,6 +290,8 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
         Objects.requireNonNull(request, "Request cannot be null");
 
         request.syncQueueStartTime = Time.currentElapsedTime();
+        // 类似于PrepRequestProcessor，内部使用轮询方式从submittedRequests
+        // 集合获取数据，因此在这里直接把Request添加到集合中即可
         queuedRequests.add(request);
         ServerMetrics.getMetrics().SYNC_PROCESSOR_QUEUED.add(1);
     }

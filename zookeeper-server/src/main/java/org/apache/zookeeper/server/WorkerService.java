@@ -150,6 +150,7 @@ public class WorkerService {
                     workRequest.cleanup();
                     return;
                 }
+                // todo
                 workRequest.doWork();
             } catch (Exception e) {
                 LOG.warn("Unexpected exception", e);

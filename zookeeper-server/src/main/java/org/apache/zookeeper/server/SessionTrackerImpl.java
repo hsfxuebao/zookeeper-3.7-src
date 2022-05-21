@@ -46,11 +46,14 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
 
     private static final Logger LOG = LoggerFactory.getLogger(SessionTrackerImpl.class);
 
+    // 保存sessionId和对应的Session对象
     protected final ConcurrentHashMap<Long, SessionImpl> sessionsById = new ConcurrentHashMap<Long, SessionImpl>();
 
     private final ExpiryQueue<SessionImpl> sessionExpiryQueue;
 
+    // key为sessionId，value为这个session的过期时间
     protected final ConcurrentMap<Long, Integer> sessionsWithTimeout;
+    // 下一次新建session时的id
     private final AtomicLong nextSessionId = new AtomicLong();
 
     public static class SessionImpl implements Session {
@@ -260,6 +263,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
 
     public long createSession(int sessionTimeout) {
         long sessionId = nextSessionId.getAndIncrement();
+        // 在使用RequestProcessor处理请求前会调用该方法为客户端创建一个session
         trackSession(sessionId, sessionTimeout);
         return sessionId;
     }
@@ -268,6 +272,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
     public synchronized boolean trackSession(long id, int sessionTimeout) {
         boolean added = false;
 
+        // 如果没有保存对应的Session对象则创建一个并添加
         SessionImpl session = sessionsById.get(id);
         if (session == null) {
             session = new SessionImpl(id, sessionTimeout);
@@ -292,7 +297,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
                 "SessionTrackerImpl --- " + actionStr
                 + " session 0x" + Long.toHexString(id) + " " + sessionTimeout);
         }
-
+        // 添加完session后更新session的过期时间
         updateSessionExpiry(session, sessionTimeout);
         return added;
     }

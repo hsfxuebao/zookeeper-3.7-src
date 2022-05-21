@@ -160,16 +160,27 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
     @Override
     public void run() {
         try {
+            // 这个方法很简单，只需要每隔一个expirationInterval时间便从待删除
+            // Session集合sessionSets中取出Session进行过期操作就行
+            // 当然，这里很简单就说明在另外一个地方进行了SessionTimeout更新操作
+            // 上一篇源码便介绍过本类中的touchSession，因此有兴趣的去翻看上一篇
+            // 分析SessionTrackerImpl的源码解析，结合起来分析便可以知道ZK的巧妙
             while (running) {
+                // 判断一下当前时间是否已经到达了下次过期时间点
                 long waitTime = sessionExpiryQueue.getWaitTime();
                 if (waitTime > 0) {
+                    // 如果未到则直接阻塞剩余等待
                     Thread.sleep(waitTime);
                     continue;
                 }
 
+                // 将nextExpirationTime时间点将要过期的Session全部取出来
                 for (SessionImpl s : sessionExpiryQueue.poll()) {
                     ServerMetrics.getMetrics().STALE_SESSIONS_EXPIRED.add(1);
+                    // 将这些Session逐个关闭并进行过期操作
                     setSessionClosing(s.sessionId);
+                    // 这里面的过期操作实际上就是向客户端发送一个
+                    // closeSession类型的响应
                     expirer.expire(s);
                 }
             }

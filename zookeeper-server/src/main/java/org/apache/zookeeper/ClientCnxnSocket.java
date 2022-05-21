@@ -48,6 +48,7 @@ abstract class ClientCnxnSocket {
 
     private static final Logger LOG = LoggerFactory.getLogger(ClientCnxnSocket.class);
 
+    // 是否已经初始化，默认false，到发送ping操作时该值一定为true
     protected boolean initialized;
 
     /**

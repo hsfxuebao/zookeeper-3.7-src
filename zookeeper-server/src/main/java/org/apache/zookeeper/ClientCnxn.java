@@ -916,12 +916,16 @@ public class ClientCnxn {
             BinaryInputArchive bbia = BinaryInputArchive.getArchive(bbis);
             ReplyHeader replyHdr = new ReplyHeader();
 
+            // 将从Server端获取的ByteBuffer数据反序列化得到ReplyHeader
             replyHdr.deserialize(bbia, "header");
             switch (replyHdr.getXid()) {
             case PING_XID:
+                // ping的xid为-2，因此会进入到这里面
                 LOG.debug("Got ping response for session id: 0x{} after {}ms.",
                     Long.toHexString(sessionId),
                     ((System.nanoTime() - lastPingSentNs) / 1000000));
+                // ping操作在这里面不会进行任何操作，而是直接退出，因此
+                // readResponse()对ping没有任何作用
                 return;
               case AUTHPACKET_XID:
                 LOG.debug("Got auth session id: 0x{}", Long.toHexString(sessionId));
@@ -1166,7 +1170,9 @@ public class ClientCnxn {
 
         private void sendPing() {
             lastPingSentNs = System.nanoTime();
+            // 创建xid为PING_XID的RequestHeader对象
             RequestHeader h = new RequestHeader(ClientCnxn.PING_XID, OpCode.ping);
+            // ping请求只有RequestHeader有值，其它的都是null
             queuePacket(h, null, null, null, null, null, null, null, null);
         }
 
@@ -1243,6 +1249,7 @@ public class ClientCnxn {
             // 上次ping和现在的时间差
             int to;
             long lastPingRwServer = Time.currentElapsedTime();
+
             final int MAX_SEND_PING_INTERVAL = 10000; //10 seconds
             InetSocketAddress serverAddress = null;
             // 只要连接没有关闭，也没有验证失败，就一直循环
@@ -1304,9 +1311,15 @@ public class ClientCnxn {
                                 }
                             }
                         }
+                        // 连接上之后使用的属性变成了readTimeout，getIdleRecv()
+                        // 方法使用的属性为lastHeard，即最后一次监听到服务端响应
+                        // 的时间戳
                         // 获取已经有多久没有收到交互响应了
                         to = readTimeout - clientCnxnSocket.getIdleRecv();
                     } else {
+                        // 未连接时会进入，因此ping流程这里不会使用，可以得出结论
+                        // connectTime属性只会在新建连接时被使用
+                        // 连接上之后失去作用
                         // 获取已经有多久没有收到连接请求的响应了
                         to = connectTimeout - clientCnxnSocket.getIdleRecv();
                     }
@@ -1318,20 +1331,33 @@ public class ClientCnxn {
                             clientCnxnSocket.getIdleRecv(),
                             Long.toHexString(sessionId));
                         LOG.warn(warnInfo);
+                        // 如果进入到这里面，说明readTimeout或者connectTimeout
+                        // 要小于上次监听到Server端的时间间隔，意味着时间过期
                         // 抛出会话超时异常
                         throw new SessionTimeoutException(warnInfo);
                     }
                     if (state.isConnected()) {
                         //1000(1 second) is to prevent race condition missing to send the second ping
                         //also make sure not to send too many pings when readTimeout is small
+                        // 获取下次ping的时间，也可以说获取select()最大阻塞时间
+                        // 这个公式分两个情况：
+                        // 1、lastSend距今超过1000ms(1s)，则固定减去1000ms
+                        // 具体公式表现为：(readTimeout / 2) - idleSend - 1000
+                        // 2、lastSend距今小于等于1000ms，则不做任何操作
+                        // 具体公式表现为：(readTimeout / 2) - idleSend
                         int timeToNextPing = readTimeout / 2
                                              - clientCnxnSocket.getIdleSend()
                                              - ((clientCnxnSocket.getIdleSend() > 1000) ? 1000 : 0);
                         //send a ping request either time is due or no packet sent out within MAX_SEND_PING_INTERVAL
+                        // 如果timeToNextPing小于等于0或者idleSend间隔超过10s
+                        // 说明是时候该发送ping请求确认连接了
                         if (timeToNextPing <= 0 || clientCnxnSocket.getIdleSend() > MAX_SEND_PING_INTERVAL) {
+                            // 发送ping请求包
                             sendPing();
+                            // 更新lastSend属性
                             clientCnxnSocket.updateLastSend();
                         } else {
+                            // to在前面设的值
                             if (timeToNextPing < to) {
                                 to = timeToNextPing;
                             }
@@ -1353,6 +1379,11 @@ public class ClientCnxn {
                     // 这个方法十分重要，因为不管是连接还是其它任何操作都会进入
                     // 该方法进行操作类型判断已经发送接收数据包，具体流程留到
                     // 后续分析clientCnxnSocket对象时再看
+
+                    // 要发送ping请求这个方法可能将会被调用两次，第一次是在
+                    // sendPing()之后调用，如果是OP_WRITE操作则可以立马进行写操作
+                    // 如果不是则会在第一次调用时开启OP_WRITE操作，轮询第二次的时候
+                    // 再调用一次用来发送ping数据包
                     clientCnxnSocket.doTransport(to, pendingQueue, ClientCnxn.this);
                 } catch (Throwable e) {
                     if (closing) {
@@ -1757,6 +1788,8 @@ public class ClientCnxn {
         // 1. synchronize with the final cleanup() in SendThread.run() to avoid race
         // 2. synchronized against each packet. So if a closeSession packet is added,
         // later packet will be notified.
+        // 方法的大致作用便是将前面传进来的RequestHeader对象封装成Packet对象
+        // 并最终放入outgoingQueue数组等待下次发送数据包时发送
         synchronized (outgoingQueue) {
             if (!state.isAlive() || closing) {
                 conLossPacket(packet);
@@ -1766,9 +1799,13 @@ public class ClientCnxn {
                 if (h.getType() == OpCode.closeSession) {
                     closing = true;
                 }
+                // 加到outgoingQueue
                 outgoingQueue.add(packet);
             }
         }
+        // 调用selector.wakeup()方法来唤醒select()方法，调用这个方法的作用
+        // 便是防止将ping数据包放到outgoingQueue后再次被select()方法阻塞从而
+        // 直接调用阻塞方法的后面逻辑
         sendThread.getClientCnxnSocket().packetAdded();
         return packet;
     }

@@ -106,10 +106,13 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
                     updateLastHeard();
                     initialized = true;
                 } else {
+                    // ping响应以及其它的普通请求将会跑到这里
                     // 这里是当新建连接成功后普通的操作响应处理逻辑
                     sendThread.readResponse(incomingBuffer);
+                    // 还原ByteBuffer对象
                     lenBuffer.clear();
                     incomingBuffer = lenBuffer;
+                    // 更新lastHeard属性，表示已经处理完Server端的响应
                     updateLastHeard();
                 }
             }
@@ -384,7 +387,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         selector.select(waitTimeOut);
         Set<SelectionKey> selected;
         synchronized (this) {
-            // 获取IO事件保定的SelectionKey对象
+            // 获取IO事件绑定的SelectionKey对象
             selected = selector.selectedKeys();
         }
         // Everything below and until we get back to the select is
@@ -408,6 +411,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
                 // 再判断是否是OP_READ或者OP_WRITE事件
                 // 如果满足则调用doIO方法来处理对应的事件，doIO便是处理获取的
                 // IO事件核心方法
+                // 在ping流程的第一步中执行到这里则一定是OP_WRITE事件
                 doIO(pendingQueue, cnxn);
             }
         }

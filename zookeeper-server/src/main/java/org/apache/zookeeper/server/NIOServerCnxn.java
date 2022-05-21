@@ -149,6 +149,8 @@ public class NIOServerCnxn extends ServerCnxn {
         }
 
         synchronized (outgoingBuffers) {
+            // 添加到outgoingBuffers集合中交给doIO()方法里面的write方法
+            // 类型处理，该逻辑在前面已经分析过了，可以直接回头看
             for (ByteBuffer buffer : buffers) {
                 outgoingBuffers.add(buffer);
             }
@@ -713,7 +715,9 @@ public class NIOServerCnxn extends ServerCnxn {
             ByteBuffer[] bb = serialize(h, r, tag, cacheKey, stat, opCode);
             responseSize = bb[0].getInt();
             bb[0].rewind();
+            // 发送ByteBuffer对象数据
             sendBuffer(bb);
+
             decrOutstandingAndCheckThrottle(h);
         } catch (Exception e) {
             LOG.warn("Unexpected exception. Destruction averted.", e);

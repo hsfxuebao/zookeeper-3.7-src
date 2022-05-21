@@ -792,6 +792,10 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         request.zxid = zks.getZxid();
         long timeFinishedPrepare = Time.currentElapsedTime();
         ServerMetrics.getMetrics().PREP_PROCESS_TIME.add(timeFinishedPrepare - request.prepStartTime);
+        // 在调用下一个RequestProcessor前先来分析一下ping请求的具体属性
+        // request.cnxn为连接对象，request.type为ping
+        // request.request为ping的数据，request.txn为null，request.hdr为null
+
         // 调用下个RequestProcessor来处理Request
         nextProcessor.processRequest(request);
         ServerMetrics.getMetrics().PROPOSAL_PROCESS_TIME.add(Time.currentElapsedTime() - timeFinishedPrepare);
@@ -937,6 +941,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             case OpCode.multiRead:
             case OpCode.addWatch:
             case OpCode.whoAmI:
+                // 判断sessionId对应的Session是否是同一个
                 zks.sessionTracker.checkSession(request.sessionId, request.getOwner());
                 break;
             default:

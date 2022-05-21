@@ -251,6 +251,7 @@ public abstract class ServerCnxn implements Stats, Watcher {
         lengthBuffer.rewind();
 
         int bufferLen = data != null ? 3 : 2;
+        // 使用ByteBuffer 封装字节数组
         ByteBuffer[] buffers = new ByteBuffer[bufferLen];
 
         buffers[0] = lengthBuffer;

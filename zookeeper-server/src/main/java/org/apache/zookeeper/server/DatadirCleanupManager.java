@@ -71,6 +71,7 @@ public class DatadirCleanupManager {
      *            purge interval in hours
      */
     public DatadirCleanupManager(File snapDir, File dataLogDir, int snapRetainCount, int purgeInterval) {
+        // 设置需要的参数
         this.snapDir = snapDir;
         this.dataLogDir = dataLogDir;
         this.snapRetainCount = snapRetainCount;
@@ -92,20 +93,22 @@ public class DatadirCleanupManager {
      * @see PurgeTxnLog#purge(File, File, int)
      */
     public void start() {
+        // purgeTaskStatus的初始状态是NOT_STARTED
         if (PurgeTaskStatus.STARTED == purgeTaskStatus) {
             LOG.warn("Purge task is already running.");
             return;
         }
         // Don't schedule the purge task with zero or negative purge interval.
+        // 如果间隔时间没有配置或者小于0本清理器将不会执行
         if (purgeInterval <= 0) {
             LOG.info("Purge task is not scheduled.");
             return;
         }
-
+        // 启动一个Timer来执行定期清理的操作
         timer = new Timer("PurgeTask", true);
         TimerTask task = new PurgeTask(dataLogDir, snapDir, snapRetainCount);
         timer.scheduleAtFixedRate(task, 0, TimeUnit.HOURS.toMillis(purgeInterval));
-
+        // 设置状态为已启动
         purgeTaskStatus = PurgeTaskStatus.STARTED;
     }
 

@@ -657,6 +657,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
     /**
      * This is who I think the leader currently is.
      */
+    // 当前的Leader选举的机器投票信息
     private volatile Vote currentVote;
 
     public synchronized Vote getCurrentVote() {
@@ -1044,8 +1045,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         }
     }
 
+    // 选举算法类型
     private int electionType;
-
+    // 具体的选举算法对象
     Election electionAlg;
 
     ServerCnxnFactory cnxnFactory;
@@ -1129,26 +1131,36 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         if (!getView().containsKey(myid)) {
             throw new RuntimeException("My id " + myid + " not in the peer list");
         }
+        // 加载文件数据
         loadDataBase();
+        // 启动和客户端连接的工厂对象用来接受Client端的连接，单机的已经分析过
+        // 这里便略过
         startServerCnxnFactory();
         try {
             adminServer.start();
         } catch (AdminServerException e) {
             LOG.warn("Problem starting AdminServer", e);
         }
+        // 开始选举算法的初始化
         startLeaderElection();
         startJvmPauseMonitor();
+        // 启动父类线程对象
         super.start();
     }
 
     private void loadDataBase() {
         try {
+            // 加载日志文件
             zkDb.loadDataBase();
 
             // load the epochs
+            // 根据日志加载的文件获取最新的zxid，如果是第一次则值为0，否则为
+            // 关闭前的最后一个zxid
             long lastProcessedZxid = zkDb.getDataTree().lastProcessedZxid;
+            // 从zxid中获取epoch参数，zxid的后32位则是epoch参数
             long epochOfZxid = ZxidUtils.getEpochFromZxid(lastProcessedZxid);
             try {
+                // 从currentEpoch文件中读取当前的epoch值
                 currentEpoch = readLongFromFile(CURRENT_EPOCH_FILENAME);
             } catch (FileNotFoundException e) {
                 // pick a reasonable epoch number
@@ -1162,6 +1174,8 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                     currentEpoch);
                 writeLongToFile(CURRENT_EPOCH_FILENAME, currentEpoch);
             }
+            // 判断日志文件中的epoch是否大于当前的epoch，如果是且
+            // updatingEpoch文件锁存在则设置当前的currentEpoch为新epoch
             if (epochOfZxid > currentEpoch) {
                 // acceptedEpoch.tmp file in snapshot directory
                 File currentTmp = new File(getTxnFactory().getSnapDir(),
@@ -1211,6 +1225,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
     public synchronized void startLeaderElection() {
         try {
             if (getPeerState() == ServerState.LOOKING) {
+                // 先将投票投给自己
                 currentVote = new Vote(myid, getLastLoggedZxid(), getCurrentEpoch());
             }
         } catch (IOException e) {
@@ -1219,6 +1234,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             throw re;
         }
 
+        // 根据electionType来创建相应的选举算法
         this.electionAlg = createElectionAlgorithm(electionType);
     }
 
@@ -1349,13 +1365,16 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         Election le = null;
 
         //TODO: use a factory rather than a switch
+        // 根据传进来的electionType来实例化具体的选举算法，只分析3=FLE算法
         switch (electionAlgorithm) {
         case 1:
             throw new UnsupportedOperationException("Election Algorithm 1 is not supported.");
         case 2:
             throw new UnsupportedOperationException("Election Algorithm 2 is not supported.");
         case 3:
+            // 创建集群连接管理对象，并把当前集群对象传进去
             QuorumCnxManager qcm = createCnxnManager();
+            // listener组件是在QuorumCnxManager中实例化的，直接获取即可
             QuorumCnxManager oldQcm = qcmRef.getAndSet(qcm);
             if (oldQcm != null) {
                 LOG.warn("Clobbering already-set QuorumCnxManager (restarting leader election?)");
@@ -1363,7 +1382,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             }
             QuorumCnxManager.Listener listener = qcm.listener;
             if (listener != null) {
+                // 启动listener组件线程对象，开始接收并监听其它机器的连接操作
                 listener.start();
+                // 创建对应的FLE算法对象FastLeaderElection
                 FastLeaderElection fle = new FastLeaderElection(this, qcm);
                 fle.start();
                 le = fle;
@@ -2192,8 +2213,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
     private long acceptedEpoch = -1;
     private long currentEpoch = -1;
 
+    // 用来在文件中记录currentEpoch属性的名称
     public static final String CURRENT_EPOCH_FILENAME = "currentEpoch";
-
+    // 用来在文件中记录acceptedEpoch属性的名称
     public static final String ACCEPTED_EPOCH_FILENAME = "acceptedEpoch";
 
     /**

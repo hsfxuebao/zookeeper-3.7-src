@@ -48,11 +48,17 @@ public class ExpiryQueue<E> {
     private final int expirationInterval;
 
     public ExpiryQueue(int expirationInterval) {
+        // 会话桶大小
         this.expirationInterval = expirationInterval;
+        // roundToNextInterval(Time.currentElapsedTime()) 计算当前时间所在的会话桶，
+        // 每个会话桶都有一个标识id，即其所包含的时间范围的最大边界时间点
+        // nextExpirationTime 用于记录下次要进行过期会话清理的时间点
         nextExpirationTime.set(roundToNextInterval(Time.currentElapsedTime()));
     }
 
+    // 计算指定时间所在的会话桶
     private long roundToNextInterval(long time) {
+        // 利用整型除整型结果仍为整型来计算会话桶的
         return (time / expirationInterval + 1) * expirationInterval;
     }
 
@@ -146,7 +152,10 @@ public class ExpiryQueue<E> {
      */
     public long getWaitTime() {
         long now = Time.currentElapsedTime();
+        // 获取本次要进行过期清理的时间点 nextExpirationTime是此时还在使用的那个桶的边界时间
+        // 刚启动的时候会为nextExpirationTime赋值
         long expirationTime = nextExpirationTime.get();
+        // 计算当前时间距离清理时间点还有多久
         return now < expirationTime ? (expirationTime - now) : 0L;
     }
 
@@ -161,13 +170,17 @@ public class ExpiryQueue<E> {
     public Set<E> poll() {
         long now = Time.currentElapsedTime();
         long expirationTime = nextExpirationTime.get();
+        // 若当前时间小于清理时间点，说明还没有到清理时间，直接返回空集合，无需清理
         if (now < expirationTime) {
             return Collections.emptySet();
         }
 
         Set<E> set = null;
+        // 计算下次清理时间点
         long newExpirationTime = expirationTime + expirationInterval;
+        // 通过CAS更新清理时间点
         if (nextExpirationTime.compareAndSet(expirationTime, newExpirationTime)) {
+            // 将当前清理时间点作为会话桶id的会话桶从会话桶集合中remove掉
             set = expiryMap.remove(expirationTime);
         }
         if (set == null) {

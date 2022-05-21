@@ -137,6 +137,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
         dropStaleRequests = drop;
     }
 
+    // RequestThrottler.run()方法
     @Override
     public void run() {
         try {
@@ -145,6 +146,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                     break;
                 }
 
+                // 从队列中获取一个请求
                 Request request = submittedRequests.take();
                 if (Request.requestOfDeath == request) {
                     break;
@@ -186,7 +188,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                       request.setIsThrottled(true);
                       ServerMetrics.getMetrics().THROTTLED_OPS.add(1);
                     }
-                    // todo
+                    // todo 将请求提交到server进行处理
                     zks.submitRequestNow(request);
                 }
             }

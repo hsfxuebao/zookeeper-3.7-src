@@ -110,13 +110,17 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
 
     private final SessionExpirer expirer;
 
+    //SessionTrackerImpl调用的构造
     public SessionTrackerImpl(SessionExpirer expirer, ConcurrentMap<Long, Integer> sessionsWithTimeout, int tickTime, long serverId, ZooKeeperServerListener listener) {
         super("SessionTracker", listener);
         this.expirer = expirer;
+        // 创建并初始化会话过期队列
         this.sessionExpiryQueue = new ExpiryQueue<SessionImpl>(tickTime);
         this.sessionsWithTimeout = sessionsWithTimeout;
         this.nextSessionId.set(initializeNextSessionId(serverId));
+        //从内存中取出之前保存的会话数据，重新加载到sessionTracker（应该是选举后重启之类的场景）
         for (Entry<Long, Integer> e : sessionsWithTimeout.entrySet()) {
+            // sessionsWithTimeout是一个map，key为sessionId，value为该会话对应的timeout
             trackSession(e.getKey(), e.getValue());
         }
 
@@ -157,6 +161,9 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
         return sw.toString();
     }
 
+    // 该run()方法就是用于对过期会话及会话桶进行清理的，
+    // 而这个清理工作是定时进行的。但这个定时功能不是通过
+    // 定时器完成的，而是通过等待完成的。
     @Override
     public void run() {
         try {
@@ -175,6 +182,8 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
                 }
 
                 // 将nextExpirationTime时间点将要过期的Session全部取出来
+                // sessionExpiryQueue.poll() 用于清理当前过期的会话桶
+                // for()用于遍历这个会话桶中的所有会话
                 for (SessionImpl s : sessionExpiryQueue.poll()) {
                     ServerMetrics.getMetrics().STALE_SESSIONS_EXPIRED.add(1);
                     // 将这些Session逐个关闭并进行过期操作
@@ -209,6 +218,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
 
     private void updateSessionExpiry(SessionImpl s, int timeout) {
         logTraceTouchSession(s.sessionId, timeout, "");
+        // 更新过期时间
         sessionExpiryQueue.update(s, timeout);
     }
 

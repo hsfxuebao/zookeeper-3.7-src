@@ -312,11 +312,14 @@ public class QuorumCnxManager {
         QuorumAuthServer authServer, QuorumAuthLearner authLearner, int socketTimeout, boolean listenOnAllIPs,
         int quorumCnxnThreadsSize, boolean quorumSaslAuthEnabled) {
 
+        // 初始化recvQueue、queueSendMap、和senderWorkerMap集合对象，用来
+        // 接收和集群间的机器消息信息
         this.recvQueue = new CircularBlockingQueue<>(RECV_CAPACITY);
         this.queueSendMap = new ConcurrentHashMap<>();
         this.senderWorkerMap = new ConcurrentHashMap<>();
         this.lastMessageSent = new ConcurrentHashMap<>();
 
+        // 读取选举时调用方法connect()连接其它机器的选举通信Socket时的参数
         String cnxToValue = System.getProperty("zookeeper.cnxTimeout");
         if (cnxToValue != null) {
             this.cnxTO = Integer.parseInt(cnxToValue);
@@ -335,6 +338,7 @@ public class QuorumCnxManager {
         initializeConnectionExecutor(mySid, quorumCnxnThreadsSize);
 
         // Starts listener thread that waits for connection requests
+        // 创建监听其它机器连接本机器的Socket监听器
         listener = new Listener();
         listener.setName("QuorumPeerListener");
     }

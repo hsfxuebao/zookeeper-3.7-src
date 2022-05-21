@@ -88,6 +88,7 @@ public class QuorumPeerMain {
     public static void main(String[] args) {
         QuorumPeerMain main = new QuorumPeerMain();
         try {
+            // 熟悉的启动主函数，linux或者windows便是调用这个把参数传进来启动ZK的
             main.initializeAndRun(args);
         } catch (IllegalArgumentException e) {
             LOG.error("Invalid arguments, exiting abnormally", e);
@@ -122,28 +123,37 @@ public class QuorumPeerMain {
     protected void initializeAndRun(String[] args) throws ConfigException, IOException, AdminServerException {
         QuorumPeerConfig config = new QuorumPeerConfig();
         if (args.length == 1) {
+            // 如果参数长度只有一个，说明这个参数是配置文件路径
+            // 读取配置文件并解析其中的参数
             config.parse(args[0]);
         }
 
         // Start and schedule the the purge task
+        // 启动定时清理日志文件的组件，里面启动也是有参数判断的，后续分析
         DatadirCleanupManager purgeMgr = new DatadirCleanupManager(
             config.getDataDir(),
             config.getDataLogDir(),
             config.getSnapRetainCount(),
             config.getPurgeInterval());
+        // 启动线程对象
         purgeMgr.start();
 
+        // 如果参数只有一个（配置文件路径）切server的信息要
+        // 大于0才调用启动集群方法
         if (args.length == 1 && config.isDistributed()) {
+            // 调用集群启动方法
             runFromConfig(config);
         } else {
             LOG.warn("Either no config or no quorum defined in config, running in standalone mode");
             // there is only server in the quorum -- run as standalone
+            // 否则调用启动单机启动的方法，这里不再分析
             ZooKeeperServerMain.main(args);
         }
     }
 
     public void runFromConfig(QuorumPeerConfig config) throws IOException, AdminServerException {
         try {
+            // 注册log日志对象
             ManagedUtil.registerLog4jMBeans();
         } catch (JMException e) {
             LOG.warn("Unable to register log4j JMX control", e);
@@ -165,7 +175,9 @@ public class QuorumPeerMain {
             ServerCnxnFactory secureCnxnFactory = null;
 
             if (config.getClientPortAddress() != null) {
+                // 创建ServerCnxnFactory工厂对象，默认类型是NIOServerCnxnFactory
                 cnxnFactory = ServerCnxnFactory.createFactory();
+                // 配置和ZK的Client对接的地址参数以及最大可接受一个IP的连接数
                 cnxnFactory.configure(config.getClientPortAddress(), config.getMaxClientCnxns(), config.getClientPortListenBacklog(), false);
             }
 
@@ -174,6 +186,7 @@ public class QuorumPeerMain {
                 secureCnxnFactory.configure(config.getSecureClientPortAddress(), config.getMaxClientCnxns(), config.getClientPortListenBacklog(), true);
             }
 
+            // 实例化集群实例，ZK集群在执行时最顶层的对象便是QuorumPeer
             quorumPeer = getQuorumPeer();
             quorumPeer.setTxnFactory(new FileTxnSnapLog(config.getDataLogDir(), config.getDataDir()));
             quorumPeer.enableLocalSessions(config.areLocalSessionsEnabled());
@@ -226,8 +239,10 @@ public class QuorumPeerMain {
                 quorumPeer.setJvmPauseMonitor(new JvmPauseMonitor(config));
             }
 
+            // 启动集群对象
             quorumPeer.start();
             ZKAuditProvider.addZKStartStopAuditLog();
+            // 等待集群对象内部结束，否则main线程将不会结束
             quorumPeer.join();
         } catch (InterruptedException e) {
             // warn, but generally this is ok

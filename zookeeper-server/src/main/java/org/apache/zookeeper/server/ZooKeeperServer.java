@@ -672,6 +672,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         if (cnxn == null) {
             return;
         }
+        // 从连接中获取到sessionId与timeout
         long id = cnxn.getSessionId();
         int to = cnxn.getSessionTimeout();
         // 获取sessionId和sessionTimeout属性调用sessionTracker去更新session
@@ -737,7 +738,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         startSessionTracker();
         // 设置单机模式下的三个重要RequestProcessor
         setupRequestProcessors();
-
+        // 启动请求流控器线程，即调用该线程的run()
         startRequestThrottler();
         // 注册到JMX中，以方便监控
         registerJMX();
@@ -763,7 +764,9 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     protected void startRequestThrottler() {
+        // 为当前server创建一个请求流控器
         requestThrottler = new RequestThrottler(this);
+        // 启动请求流控器线程，即执行其run()
         requestThrottler.start();
 
     }
@@ -796,6 +799,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     protected void createSessionTracker() {
+        // 从磁盘中获取具有timeout的所有session会话
         sessionTracker = new SessionTrackerImpl(this, zkDb.getSessionWithTimeOuts(), tickTime, createSessionTrackerServerId, getZooKeeperServerListener());
     }
 
@@ -1066,13 +1070,16 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     public void reopenSession(ServerCnxn cnxn, long sessionId, byte[] passwd, int sessionTimeout) throws IOException {
+        // 若当前连接密码正确，则验证会话，否则关闭会话
         if (checkPasswd(sessionId, passwd)) {
+            // 验证会话
             revalidateSession(cnxn, sessionId, sessionTimeout);
         } else {
             LOG.warn(
                 "Incorrect password from {} for session 0x{}",
                 cnxn.getRemoteSocketAddress(),
                 Long.toHexString(sessionId));
+            // 关闭会话
             finishSessionInit(cnxn, false);
         }
     }
@@ -1080,6 +1087,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     public void finishSessionInit(ServerCnxn cnxn, boolean valid) {
         // register with JMX
         try {
+            // 若会话有效，则重新注册原来的连接，即原来的连接仍是有效的
             if (valid) {
                 if (serverCnxnFactory != null && serverCnxnFactory.cnxns.contains(cnxn)) {
                     serverCnxnFactory.registerConnection(cnxn);
@@ -1110,19 +1118,22 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             bb.putInt(bb.remaining() - 4).rewind();
             cnxn.sendBuffer(bb);
 
+            // 处理会话有效的情况
             if (valid) {
                 LOG.debug(
                     "Established session 0x{} with negotiated timeout {} for client {}",
                     Long.toHexString(cnxn.getSessionId()),
                     cnxn.getSessionTimeout(),
                     cnxn.getRemoteSocketAddress());
+                // 启用接收到的连接，client会发生会话转移事件
                 cnxn.enableRecv();
-            } else {
+            } else { // 处理会话有效的情况
 
                 LOG.info(
                     "Invalid session 0x{} for client {}, probably expired",
                     Long.toHexString(cnxn.getSessionId()),
                     cnxn.getRemoteSocketAddress());
+                // 向client发送关闭连接响应，client会发生会话失效事件
                 cnxn.sendBuffer(ServerCnxnFactory.closeConn);
             }
 
@@ -1203,7 +1214,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             }
         }
         try {
-            // 更新session的过期时间
+            // 处理请求连接，更新session的过期时间
             touch(si.cnxn);
             // 校验请求类型是否有效
             boolean validpacket = Request.isValid(si.type);
@@ -1424,9 +1435,11 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             cnxn.getRemoteSocketAddress(),
             Long.toHexString(connReq.getLastZxidSeen()));
 
+        // 从请求中获取到sessionId
         long sessionId = connReq.getSessionId();
         int tokensNeeded = 1;
         if (connThrottle.isConnectionWeightEnabled()) {
+            // 若sessionId为0，则说明本次连接是第一次连接，那么需要创建一个session
             if (sessionId == 0) {
                 if (localSessionEnabled) {
                     tokensNeeded = connThrottle.getRequiredTokensForLocal();
@@ -1525,6 +1538,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
                 secureServerCnxnFactory.closeSession(sessionId, ServerCnxn.DisconnectReason.CLIENT_RECONNECT);
             }
             cnxn.setSessionId(sessionId);
+            // 重新打开会话，若连接成功，则需要判断本次成功的连接属于“连接转移”还是“会话失效”
             reopenSession(cnxn, sessionId, passwd, sessionTimeout);
             ServerMetrics.getMetrics().CONNECTION_REVALIDATE_COUNT.add(1);
 

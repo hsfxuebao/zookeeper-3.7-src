@@ -177,11 +177,13 @@ public class QuorumPeerConfig {
         LOG.info("Reading configuration from: " + path);
 
         try {
+            // 根据配置文件生成文件对象
             File configFile = (new VerifyingFileFactory.Builder(LOG)
                 .warnForRelativePath()
                 .failForNonExistingPath()
                 .build()).create(path);
 
+            // 加载配置属性文件到Properties对象中
             Properties cfg = new Properties();
             try (FileInputStream in = new FileInputStream(configFile)) {
                 cfg.load(in);
@@ -190,7 +192,9 @@ public class QuorumPeerConfig {
 
             /* Read entire config file as initial configuration */
             initialConfig = new String(Files.readAllBytes(configFile.toPath()));
-
+            // 开始解析文件属性以及进行一些简单的必填参数校验了
+            // 这里略过，如果有关配置文件解析校验相关的错误基本上都可以
+            // 在这个方法中找到对应的判断逻辑
             parseProperties(cfg);
         } catch (IOException e) {
             throw new ConfigException("Error processing " + path, e);

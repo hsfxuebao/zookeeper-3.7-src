@@ -82,9 +82,18 @@ import org.slf4j.LoggerFactory;
  * guarantee that there is exactly one connection for every pair of servers that
  * are operating correctly and that can communicate over the network.
  *
+ * 翻译：这个类为使用TCP的领袖选举实现了一个连接管理器。
+ *  * 它为每对服务器维护一个连接。棘手的部分是确保每一对服务器都有一个连接，
+ *  * 这些服务器都在正确地运行，并且可以通过网络进行通信。
+ *  *
+ *  * 解释：每队服务器维护一个连接的意思就是A连接服务器
+ *
  * If two servers try to start a connection concurrently, then the connection
  * manager uses a very simple tie-breaking mechanism to decide which connection
  * to drop based on the IP addressed of the two parties.
+ *
+ * 翻译：如果两个服务器试图同时启动一个连接，则连接管理器使用非常简单的中断连接
+ *  * 机制来决定哪个中断，基于双方的IP地址。
  *
  * For every peer, the manager maintains a queue of messages to send. If the
  * connection to any particular peer drops, then the sender thread puts the
@@ -93,9 +102,22 @@ import org.slf4j.LoggerFactory;
  * message to the tail of the queue, thus changing the order of messages.
  * Although this is not a problem for the leader election, it could be a problem
  * when consolidating peer communication. This is to be verified, though.
- *
+ * 翻译：对于每个对等体，管理器维护着一个消息发送队列。如果连接到任何
+ *  * 特定的Server中断，那么发送者线程将消息放回到这个队列中。
+ *  * 作为这个实现，当前使用一个队列来实现维护发送给另一方的消息，因此我们将消息
+ *  * 添加到队列的尾部，从而更改了消息的顺序。虽然对于Leader选举来说这不是一个问题，
+ *  * 但对于加强对等通信可能就是个问题。不过，这一点有待验证。
+ *  *
+ *  * 解释：比如发送消息1给某一个Server，如果和该Server连接断开后，想再给该Server发送消息2时
+ *  * 此时消息就会存到该Server在本地对应维护的一个消息发送队列中，等连接恢复后会重新尝试发送。
  */
 
+// 每个server都拥有一个QuorumCnxManager，而QuorumCnxManager对象拥有一个消息发送map，
+// 该map的key为其它server的id，value为一个队列。这个队列中存放的是当前server向这个server
+// 发送失败的消息。这样的话，对于这个map会有这样的三种情况：
+// 1)所有队列均为空：说明当前server发送的消息全部成功。
+// 2)所有队列均不空：说明当前server发送给所有其它server的消息全部失败，即当前server与集合失联。
+// 3)若有一个队列为空：说明当前server给这个server发送的消息全部成功，即当前server与集群没有失联。
 public class QuorumCnxManager {
 
     private static final Logger LOG = LoggerFactory.getLogger(QuorumCnxManager.class);
@@ -110,6 +132,7 @@ public class QuorumCnxManager {
     // 每次发送消息的数量，固定是一，确保消息可以有序安全的发送出去
     static final int SEND_CAPACITY = 1;
 
+    // 接收目标机器发送过来的数据最大长度，最大长度为500K
     static final int PACKETMAXSIZE = 1024 * 512;
 
     /*
@@ -159,12 +182,16 @@ public class QuorumCnxManager {
     /*
      * Mapping from Peer to Thread number
      */
+    //每一个QuorumPeer都有一个QuorumCnxManager对象负责选举期间QuorumPeer之间连接的
+    //建立和发送、接收消息队列的维护，而这些消息是通过以下4个集合被处理的：
+
     // 保存和集群内另一台机器通信对的集合，key为另一台机器的myid，value则是
     // 本机器与其通信的通信对
     final ConcurrentHashMap<Long, SendWorker> senderWorkerMap;
     // 将要发送给某个机器的ByteBuffer集合，key为发送机器的sid，value为单个消息
     // 元素的阻塞队列，确保每次只发送一条消息（ArrayBlockingQueue长度固定）
     final ConcurrentHashMap<Long, BlockingQueue<ByteBuffer>> queueSendMap;
+    // 保存给sid机器的最后发送消息，key为目标机器的sid，value则是具体的发送消息
     final ConcurrentHashMap<Long, ByteBuffer> lastMessageSent;
 
     /*
@@ -188,6 +215,8 @@ public class QuorumCnxManager {
     /*
      * Counter to count worker threads
      */
+    // 记录当前的连接管理对象中有多少个线程正在运行，即选择通信对的
+    // SendWorker和RecvWorker
     private AtomicInteger threadCnt = new AtomicInteger(0);
 
     /*
@@ -900,14 +929,19 @@ public class QuorumCnxManager {
      * Check if all queues are empty, indicating that all messages have been delivered.
      */
     boolean haveDelivered() {
+        // queueSendMap的key为其它server的id，value为一个队列。
+        // 这个队列中存放的是当前server向这个server发送失败的消息。
         for (BlockingQueue<ByteBuffer> queue : queueSendMap.values()) {
             final int queueSize = queue.size();
             LOG.debug("Queue size: {}", queueSize);
+            // 若queueSize为0，说明当前server向某个其它server发送的消息全部成功了，
+            // 即当前server与整个集群没有失联，其消息交付是成功的
             if (queueSize == 0) {
                 return true;
             }
         }
-
+        // 代码走到这里，说明所有queue的size都不是0，即当前server向所有其它server
+        // 发送的消息全部失败，也就是说，当前server与整个集群失联了
         return false;
     }
 
@@ -1262,11 +1296,17 @@ public class QuorumCnxManager {
      */
     class SendWorker extends ZooKeeperThread {
 
+        // 本个通信对的发送线程对象需要对接通信的机器sid（即对应机器的myid）
         Long sid;
+        // 本个通信对的发送线程对象和需要通信机器建立的Socket长连接
         Socket sock;
+        // 本通信对的发送消息线程对象对应的接收消息线程对象
         RecvWorker recvWorker;
+        // 运行状态
         volatile boolean running = true;
+        // 使用Socket对象的outputStream对象流创建的数据输出流对象，负责实际的通信
         DataOutputStream dout;
+
         AtomicBoolean ongoingAsyncValidation = new AtomicBoolean(false);
 
         /**
@@ -1332,14 +1372,20 @@ public class QuorumCnxManager {
         }
 
         synchronized void send(ByteBuffer b) throws IOException {
+            // 为需要发送的字节数组创建新的等长度数组以方便后续进行消息校验
             byte[] msgBytes = new byte[b.capacity()];
             try {
+                // 将需要发送的消息数组位置归位，以确保可以校验整个数组
                 b.position(0);
+                // 调用get方法有两个目的：1、检查数组数据边界是否正常；
+                // 2、检查缓存对象中的数据是否超出缓存初始化的大小，如果超出抛异常
                 b.get(msgBytes);
             } catch (BufferUnderflowException be) {
                 LOG.error("BufferUnderflowException ", be);
+                // 如果缓存数据超出缓存对象的申请大小则说明内存溢出，无法进行正常操作
                 return;
             }
+            // 校验通过发送缓存对象中的数据，首先发送数据大小，其次再发送整体数据
             dout.writeInt(b.capacity());
             dout.write(b.array());
             dout.flush();
@@ -1347,6 +1393,7 @@ public class QuorumCnxManager {
 
         @Override
         public void run() {
+            // 有一个线程已经执行，线程数量+1
             threadCnt.incrementAndGet();
             try {
                 /**
@@ -1362,16 +1409,24 @@ public class QuorumCnxManager {
                  * message than that stored in lastMessage. To avoid sending
                  * stale message, we should send the message in the send queue.
                  */
+                // 刚启动的时候便去queueSendMap集合中查询是否有本通信对的发送目标
+                // 机器消息
                 BlockingQueue<ByteBuffer> bq = queueSendMap.get(sid);
+                // 如果没有消息需要发送给目标机器则获取最后一次发送给这个机器的消息
+                // 并发送给目标机器
                 if (bq == null || isSendQueueEmpty(bq)) {
+                    // 获取最后发送给目标机器的消息
                     ByteBuffer b = lastMessageSent.get(sid);
+                    // 如果以前发送过消息则调用send()方法发送消息
                     if (b != null) {
                         LOG.debug("Attempting to send lastMessage to sid={}", sid);
+                        // 发送消息，具体方法后面再分析
                         send(b);
                     }
                 }
             } catch (IOException e) {
                 LOG.error("Failed to send last message. Shutting down thread.", e);
+                // 发生了意外则销毁本通信对
                 this.finish();
             }
             LOG.debug("SendWorker thread started towards {}. myId: {}", sid, QuorumCnxManager.this.mySid);
@@ -1381,16 +1436,29 @@ public class QuorumCnxManager {
 
                     ByteBuffer b = null;
                     try {
+                        // 查询queueSendMap集合中是否有本通信对的发送目标机器消息
                         BlockingQueue<ByteBuffer> bq = queueSendMap.get(sid);
+                        // 如果目标机器的阻塞队列不为空则从阻塞队列中获取需要发送的
+                        // 消息
                         if (bq != null) {
+                            // 如果队列不为空则从阻塞队列中获取数据
                             b = pollSendQueue(bq, 1000, TimeUnit.MILLISECONDS);
                         } else {
                             LOG.error("No queue of incoming messages for server {}", sid);
+                            // 如果阻塞队列为空说明初始化有异常，阻塞队列在实例化
+                            // 线程对象时就已经被创建，且容量只有1
                             break;
                         }
-
+                        // 从消息阻塞队列中获取到了消息且不为空则进行发送操作，为空
+                        // 则继续下一次轮询查询阻塞队列是否有需要发送的消息
                         if (b != null) {
+                            // 发送前记录给目标机器发送的最后一次消息对象，以方便
+                            // 下次和目标机器通信时的通信对可以继续上次的消息开始
+                            // 发送，确保消息的连续性。不用担心如果目标机器接收到
+                            // 相同的消息会怎么办，接收方就算接收到了相同的消息
+                            // 也不会对结果有什么影响
                             lastMessageSent.put(sid, b);
+                            // 调用方法方法去发送消息对象
                             send(b);
                         }
                     } catch (InterruptedException e) {
@@ -1404,6 +1472,7 @@ public class QuorumCnxManager {
                     QuorumCnxManager.this.mySid,
                     e);
             }
+            // 运行完成说明该通信对已经需要退出，调用销毁方法
             this.finish();
 
             LOG.warn("Send worker leaving thread id {} my id = {}", sid, self.getId());
@@ -1443,11 +1512,17 @@ public class QuorumCnxManager {
      * channel breaks, then removes itself from the pool of receivers.
      */
     class RecvWorker extends ZooKeeperThread {
-
+        // 本个通信对的发送线程对象需要对接通信的机器sid（即对应机器的myid）
         Long sid;
+        // 本个通信对的发送线程对象和需要通信机器建立的Socket长连接
         Socket sock;
+        // 运行状态
         volatile boolean running = true;
+        // 使用Socket对象的outputStream对象流创建的数据输入流对象，负责实际的接收
+        // 消息通信
         final DataInputStream din;
+        // 本通信对的发送消息线程对象对应的接收消息线程对象，该对象仅在需要销毁
+        // 本线程对象时用到finish()方法
         final SendWorker sw;
 
         RecvWorker(Socket sock, DataInputStream din, Long sid, SendWorker sw) {
@@ -1488,23 +1563,33 @@ public class QuorumCnxManager {
 
         @Override
         public void run() {
+            // 有一个线程已经执行，线程数量+1
             threadCnt.incrementAndGet();
             try {
                 LOG.debug("RecvWorker thread towards {} started. myId: {}", sid, QuorumCnxManager.this.mySid);
+                // 开始轮询din对象接收sid目标机器的消息
                 while (running && !shutdown && sock != null) {
                     /**
                      * Reads the first int to determine the length of the
                      * message
                      */
+                    // 接收消息需要和发送方一样，发送方在发送消息时第一步便把
+                    // 消息的长度发送了过来，因此接收也是首先接收数据长度
                     int length = din.readInt();
+                    // 如果数据长度不符合则会抛出异常退出，因此发送方才会进行必要的
+                    // 校验，因为接收方接收到不符合规范的之后将会关闭连接通信
                     if (length <= 0 || length > PACKETMAXSIZE) {
                         throw new IOException("Received packet with invalid packet: " + length);
                     }
                     /**
                      * Allocates a new ByteBuffer to receive the message
                      */
+                    // 从目标机器的通信Socket对象接收完整的数据
                     final byte[] msgArray = new byte[length];
                     din.readFully(msgArray, 0, length);
+                    // 封装生成对应的缓存对象ByteBuffer
+                    // 将接收到的数据添加到recvQueue集合中，recvQueue集合为
+                    // QuorumCnxManager对象和FLE选举算法对象进行消息交互的集合
                     addToRecvQueue(new Message(ByteBuffer.wrap(msgArray), sid));
                 }
             } catch (Exception e) {
@@ -1515,7 +1600,9 @@ public class QuorumCnxManager {
                     e);
             } finally {
                 LOG.warn("Interrupting SendWorker thread from RecvWorker. sid: {}. myId: {}", sid, QuorumCnxManager.this.mySid);
+                // 抛出了IO异常之后销毁本通信对并关闭Socket连接对象
                 sw.finish();
+                // 关闭Socket连接对象
                 closeSocket(sock);
             }
         }

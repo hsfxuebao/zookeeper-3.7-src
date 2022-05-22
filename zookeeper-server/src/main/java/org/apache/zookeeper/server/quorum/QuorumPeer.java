@@ -99,9 +99,21 @@ import org.slf4j.LoggerFactory;
  * A majority of followers must log the request before it can be accepted.
  * </ol>
  *
+ * 翻译：这个类管理着“法定人数投票”协议。这个服务器有三个状态：
+ * （1）Leader election：(处于该状态的)每一个服务器将选举一个Leader(最初推荐自
+ * 		己作为Leader)。(这个状态即LOOKING状态)
+ * （2）Follower：(处于该状态的)服务器将与Leader做同步，并复制所有的事务(注意这里的事务指
+ * 		的是最终的提议Proposal。不要忘记txid中的tx即为事务)。
+ * （3）Leader：(处于该状态的)服务器将处理请求，并将这些请求转发给其它Follower。
+ *		大多数Follower在该写请求被批准之前(before it can be accepted)都必须
+ *		要记录下该请求(注意，这里的请求指的是写请求，Leader在接收到写请求后会向所有
+ * 		Follower发出提议，在大多数Follower同意后该写请求才会被批准)。
+ *
  * This class will setup a datagram socket that will always respond with its
  * view of the current leader. The response will take the form of:
  *
+ * 翻译：这个类将设置一个数据报套接字(就是一种数据结构)，这个数据报套接字将
+ *  总是使用它的视图(格式)来响应当前的Leader。响应将采用的格式为：
  * <pre>
  * int xid;
  *
@@ -113,6 +125,8 @@ import org.slf4j.LoggerFactory;
  * </pre>
  *
  * The request for the current leader will consist solely of an xid: int xid;
+ * 翻译：当前Leader的请求将仅(solely)包含(consist)一个xid(注意，xid即事务id，
+ *  是一个新的提议的唯一标识)。
  */
 public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider {
 
@@ -573,6 +587,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
     /*
      * Record leader election time
      */
+    // 记录FLE选举流程的开始和结束时间
     public long start_fle, end_fle; // fle = fast leader election
     public static final String FLE_TIME_UNIT = "MS";
     private long unavailableStartTime;
@@ -1716,7 +1731,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
     }
 
     public synchronized Set<Long> getCurrentAndNextConfigVoters() {
+        // 使用当前版本的QuorumVerifier中所有的participant，创建一个set集合
         Set<Long> voterIds = new HashSet<Long>(getQuorumVerifier().getVotingMembers().keySet());
+        // 若当前有最新版本的QuorumVerifier，则将其participant更新到voterIds中
         if (getLastSeenQuorumVerifier() != null) {
             voterIds.addAll(getLastSeenQuorumVerifier().getVotingMembers().keySet());
         }

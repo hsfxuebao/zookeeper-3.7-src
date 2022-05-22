@@ -270,6 +270,7 @@ public class ZKDatabase {
     }
 
     private final PlayBackListener commitProposalPlaybackListener = new PlayBackListener() {
+        // "这个方法是在快速恢复最新事物的时候调用FileTxnSnapLog#fastForwardFromEdits"
         public void onTxnLoaded(TxnHeader hdr, Record txn, TxnDigest digest) {
             addCommittedProposal(hdr, txn, digest);
         }

@@ -84,11 +84,12 @@ public class Learner {
 
     }
 
+    // 代表集群对象，包含了集群的配置信息以及投票结果等信息
     QuorumPeer self;
     LearnerZooKeeperServer zk;
 
     protected BufferedOutputStream bufferedOutput;
-
+    // 本Follower和Leader通信的Socket对象
     protected Socket sock;
     protected MultipleAddresses leaderAddr;
     protected AtomicBoolean sockBeingClosed = new AtomicBoolean(false);
@@ -101,6 +102,7 @@ public class Learner {
     }
 
     LearnerSender sender = null;
+    // 和Leader机器通信的输入输出流对象
     protected InputArchive leaderIs;
     protected OutputArchive leaderOs;
     /** the protocol version of the leader */
@@ -273,7 +275,9 @@ public class Learner {
     protected QuorumServer findLeader() {
         QuorumServer leaderServer = null;
         // Find the leader by id
+        // 从集群对象投票信息中获取当前Leader的信息
         Vote current = self.getCurrentVote();
+        // 从server配置中获取和Leader信息一致的机器连接信息
         for (QuorumServer s : self.getView().values()) {
             if (s.id == current.getId()) {
                 // Ensure we have the leader's correct IP address before
@@ -286,6 +290,7 @@ public class Learner {
         if (leaderServer == null) {
             LOG.warn("Couldn't find the leader with id = {}", current.getId());
         }
+        // 返回连接地址对象
         return leaderServer;
     }
 
@@ -353,6 +358,7 @@ public class Learner {
 
         self.authLearner.authenticate(sock, hostname);
 
+        // 使用Socket对象创建对应的输入输出流
         leaderIs = BinaryInputArchive.getArchive(new BufferedInputStream(sock.getInputStream()));
         bufferedOutput = new BufferedOutputStream(sock.getOutputStream());
         leaderOs = BinaryOutputArchive.getArchive(bufferedOutput);
@@ -504,6 +510,7 @@ public class Learner {
         writePacket(qp, true);
         readPacket(qp);
         final long newEpoch = ZxidUtils.getEpochFromZxid(qp.getZxid());
+        // "这里接收到来自leader的同步协议handshake的响应。LEADERINFO "
         if (qp.getType() == Leader.LEADERINFO) {
             // we are connected to a 1.0 server so accept the new epoch and read the next packet
             leaderProtocolVersion = ByteBuffer.wrap(qp.getData()).getInt();
@@ -524,6 +531,7 @@ public class Learner {
                                       + " is less than accepted epoch, "
                                       + self.getAcceptedEpoch());
             }
+            // " 发送ACKEPOCH同步他的初始zxid 。有点像tcp协议的初始化ISN。 "
             QuorumPacket ackNewEpoch = new QuorumPacket(Leader.ACKEPOCH, lastLoggedZxid, epochBytes, null);
             writePacket(ackNewEpoch, true);
             return ZxidUtils.makeZxid(newEpoch, 0);
@@ -571,6 +579,8 @@ public class Learner {
                 } else {
                     snapshotNeeded = false;
                 }
+            // "如果是snapshot的话，先清空自己的dataTree，然后从snapshot日志文件中反序列化，
+            //然后设定lastProcessedZxid "
             } else if (qp.getType() == Leader.SNAP) {
                 self.setSyncMode(QuorumPeer.SyncMode.SNAP);
                 LOG.info("Getting a snapshot from leader 0x{}", Long.toHexString(qp.getZxid()));
@@ -626,6 +636,7 @@ public class Learner {
             outerLoop:
             while (self.isRunning()) {
                 readPacket(qp);
+                // "如果是DIff的方式同步，那么leader会不断发送PROPOSAL,COMMIT数据包。这里涉及到二阶段提交。packetsNotCommitted加一条  "
                 switch (qp.getType()) {
                 case Leader.PROPOSAL:
                     PacketInFlight pif = new PacketInFlight();

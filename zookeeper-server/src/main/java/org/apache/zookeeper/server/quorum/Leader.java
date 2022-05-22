@@ -81,6 +81,9 @@ public class Leader extends LearnerMaster {
 
     private static final Logger LOG = LoggerFactory.getLogger(Leader.class);
 
+    // 设置同步连接的Socket对象是否禁用延时方式，默认true，Socket的nodelay
+    // 属性设为true的作用便是可以即时的发送小包数据，设置为false则会等待到达
+    // 一定数据量后才会发送
     private static final boolean nodelay = System.getProperty("leader.nodelay", "true").equals("true");
 
     static {
@@ -117,13 +120,14 @@ public class Leader extends LearnerMaster {
     }
 
     final LeaderZooKeeperServer zk;
-
+    // 代表集群对象，包含了集群的配置信息以及投票结果等信息
     final QuorumPeer self;
 
     // VisibleForTesting
     protected boolean quorumFormed = false;
 
     // the follower acceptor thread
+    // 用来接收Follower对象的请求连接对象
     volatile LearnerCnxAcceptor cnxAcceptor = null;
 
     // list of all the learners, including followers and observers
@@ -581,11 +585,13 @@ public class Leader extends LearnerMaster {
      * @throws InterruptedException
      */
     void lead() throws IOException, InterruptedException {
+        // 当Leader开始进行领导集群时代表FLE选举流程结束
         self.end_fle = Time.currentElapsedTime();
         long electionTimeTaken = self.end_fle - self.start_fle;
         self.setElectionTimeTaken(electionTimeTaken);
         ServerMetrics.getMetrics().ELECTION_TIME.add(electionTimeTaken);
         LOG.info("LEADING - LEADER ELECTION TOOK - {} {}", electionTimeTaken, QuorumPeer.FLE_TIME_UNIT);
+        // 归零时间记录
         self.start_fle = 0;
         self.end_fle = 0;
 
@@ -593,14 +599,18 @@ public class Leader extends LearnerMaster {
 
         try {
             self.setZabState(QuorumPeer.ZabState.DISCOVERY);
+            // tick记录归零该值会在最后的心跳检测每个tickTime时间便+1
             self.tick.set(0);
+            // 加载本机器的日志文件信息，并生成lastProcessedZxid属性
             zk.loadData();
 
             leaderStateSummary = new StateSummary(self.getCurrentEpoch(), zk.getLastProcessedZxid());
 
             // Start thread that waits for connection requests from
             // new followers.
+            // 实例化LearnerCnxAcceptor对象
             cnxAcceptor = new LearnerCnxAcceptor();
+            // 启动线程对象
             cnxAcceptor.start();
 
             long epoch = getEpochToPropose(self.getId(), self.getAcceptedEpoch());
@@ -1424,6 +1434,7 @@ public class Leader extends LearnerMaster {
                 connectingFollowers.add(sid);
             }
             QuorumVerifier verifier = self.getQuorumVerifier();
+            // todo 只有超过一半的connectingFollowers ，才会notifyAll唤醒线程
             if (connectingFollowers.contains(self.getId()) && verifier.containsQuorum(connectingFollowers)) {
                 waitingForNewEpoch = false;
                 self.setAcceptedEpoch(epoch);
@@ -1476,6 +1487,7 @@ public class Leader extends LearnerMaster {
                 }
             }
             QuorumVerifier verifier = self.getQuorumVerifier();
+            // 过半唤醒线程
             if (electingFollowers.contains(self.getId()) && verifier.containsQuorum(electingFollowers)) {
                 electionFinished = true;
                 electingFollowers.notifyAll();

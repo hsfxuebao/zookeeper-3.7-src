@@ -70,11 +70,13 @@ public class Follower extends Learner {
      * @throws InterruptedException
      */
     void followLeader() throws InterruptedException {
+        // 当Follower开始跟随领导时代表FLE选举流程结束
         self.end_fle = Time.currentElapsedTime();
         long electionTimeTaken = self.end_fle - self.start_fle;
         self.setElectionTimeTaken(electionTimeTaken);
         ServerMetrics.getMetrics().ELECTION_TIME.add(electionTimeTaken);
         LOG.info("FOLLOWING - LEADER ELECTION TOOK - {} {}", electionTimeTaken, QuorumPeer.FLE_TIME_UNIT);
+        // 归零时间记录
         self.start_fle = 0;
         self.end_fle = 0;
         fzk.registerJMX(new FollowerBean(this, zk), self.jmxLocalPeerBean);
@@ -84,8 +86,10 @@ public class Follower extends Learner {
 
         try {
             self.setZabState(QuorumPeer.ZabState.DISCOVERY);
+            // 从配置文件配置的信息中心获取Leader的连接信息
             QuorumServer leaderServer = findLeader();
             try {
+                // 开始连接Leader机器
                 connectToLeader(leaderServer.addr, leaderServer.hostname);
                 connectionTime = System.currentTimeMillis();
                 long newEpochZxid = registerWithLeader(Leader.FOLLOWERINFO);
@@ -94,6 +98,7 @@ public class Follower extends Learner {
                 }
                 //check to see if the leader zxid is lower than ours
                 //this should never happen but is just a safety check
+                // todo 注册同步请求，FOLLOWERINFO,
                 long newEpoch = ZxidUtils.getEpochFromZxid(newEpochZxid);
                 if (newEpoch < self.getAcceptedEpoch()) {
                     LOG.error("Proposed leader epoch "
@@ -105,6 +110,7 @@ public class Follower extends Learner {
                 long startTime = Time.currentElapsedTime();
                 self.setLeaderAddressAndId(leaderServer.addr, leaderServer.getId());
                 self.setZabState(QuorumPeer.ZabState.SYNCHRONIZATION);
+                // TODO
                 syncWithLeader(newEpochZxid);
                 self.setZabState(QuorumPeer.ZabState.BROADCAST);
                 completedSync = true;

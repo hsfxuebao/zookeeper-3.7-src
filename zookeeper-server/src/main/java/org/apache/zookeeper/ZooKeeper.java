@@ -1911,6 +1911,7 @@ public class ZooKeeper implements AutoCloseable {
         PathUtils.validatePath(clientPath);
 
         // the watch contains the un-chroot path
+        // 在每个方法的代码中便写死了注册器WatchRegistration的类型
         WatchRegistration wcb = null;
         if (watcher != null) {
             wcb = new ExistsWatchRegistration(watcher, clientPath);
@@ -1922,8 +1923,10 @@ public class ZooKeeper implements AutoCloseable {
         h.setType(ZooDefs.OpCode.exists);
         ExistsRequest request = new ExistsRequest();
         request.setPath(serverPath);
+        // 这是关键，客户端会根据此值来判断请求是否需要添加到监听表中
         request.setWatch(watcher != null);
         SetDataResponse response = new SetDataResponse();
+        // 使用ClientCnxn对象发送请求，具体的发送细节不再赘述
         ReplyHeader r = cnxn.submitRequest(h, request, response, wcb);
         if (r.getErr() != 0) {
             if (r.getErr() == KeeperException.Code.NONODE.intValue()) {

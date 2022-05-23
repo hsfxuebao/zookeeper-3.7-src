@@ -540,6 +540,8 @@ public class ClientCnxn {
                 watchers = new HashSet<>(materializedWatchers);
             }
             // 使用传入的ZK事件和ClientWatchManager生成事件和监听器的绑定对象
+            // 根据事件类型从客户端的监听表中获取监听器集合Set<Watcher>
+            // 并统一封装成WatcherSetEventPair对象添加到阻塞队列中
             WatcherSetEventPair pair = new WatcherSetEventPair(watchers, event);
             // queue the pair (watch set & event) for later processing
             // 将事件和监听器的绑定对象添加到waitingEvents集合中，这个集合类型只
@@ -606,6 +608,7 @@ public class ClientCnxn {
         private void processEvent(Object event) {
             try {
                 if (event instanceof WatcherSetEventPair) {
+                    // 前面已经得知，如果是事件回调通知则类型一定进入到此代码中
                     // each watcher will process the event
                     WatcherSetEventPair pair = (WatcherSetEventPair) event;
                     // 如果是正常的WatcherSetEventPair类型则直接取出里面所有的
@@ -613,6 +616,7 @@ public class ClientCnxn {
                     // 的Watcher回调
                     for (Watcher watcher : pair.watchers) {
                         try {
+                            // 调用客户端实际实现的监听器，完成回调
                             watcher.process(pair.event);
                         } catch (Throwable t) {
                             LOG.error("Error while calling watcher.", t);
@@ -779,6 +783,9 @@ public class ClientCnxn {
         }
         // Add all the removed watch events to the event queue, so that the
         // clients will be notified with 'Data/Child WatchRemoved' event type.
+        // Packet对象中如果要监听，watchRegistration一定不为空
+        // 因此在这里会使用刚开始初始化的watchRegistration对象
+        // 进行注册，将其添加到ZK客户端的监听表中
         if (p.watchDeregistration != null) {
             Map<EventType, Set<Watcher>> materializedWatchers = null;
             try {
@@ -936,9 +943,13 @@ public class ClientCnxn {
                     eventThread.queueEventOfDeath();
                 }
               return;
+
             case NOTIFICATION_XID:
                 LOG.debug("Got notification session id: 0x{}",
                     Long.toHexString(sessionId));
+                // 实例化对象并反序列化服务端回复的消息内容，主要是触发的事件类型
+                // 需注意这里和后面的WatchedEvent不一样， 这个是事件通信对象
+                // 后面的是客户端的事件对象
                 WatcherEvent event = new WatcherEvent();
                 event.deserialize(bbia, "response");
 
@@ -954,7 +965,7 @@ public class ClientCnxn {
                              event.getPath(), chrootPath);
                      }
                 }
-
+                // 实例化事件对象，并交给事件线程处理
                 WatchedEvent we = new WatchedEvent(event);
                 LOG.debug("Got {} for session id 0x{}", we, Long.toHexString(sessionId));
                 eventThread.queueEvent(we);
@@ -1005,6 +1016,7 @@ public class ClientCnxn {
 
                 LOG.debug("Reading reply session id: 0x{}, packet:: {}", Long.toHexString(sessionId), packet);
             } finally {
+                // todo 正常的服务端响应都会执行到这个方法
                 finishPacket(packet);
             }
         }

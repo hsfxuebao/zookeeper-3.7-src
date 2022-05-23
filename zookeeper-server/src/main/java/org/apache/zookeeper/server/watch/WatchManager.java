@@ -142,6 +142,9 @@ public class WatchManager implements IWatchManager {
                         watchers.add(watcher);
                         if (!watcherMode.isPersistent()) {
                             iterator.remove();
+                            // 再将监听器所监听的路径给删除，因为监听器实际是ServerCnxn对象
+                            // watch2Paths表中的key对于某一客户端是唯一的，只需要删除其中
+                            // 的某一个路径即可
                             Set<String> paths = watch2Paths.get(watcher);
                             if (paths != null) {
                                 paths.remove(localPath);
@@ -154,6 +157,7 @@ public class WatchManager implements IWatchManager {
                 }
             }
         }
+
         if (watchers.isEmpty()) {
             if (LOG.isTraceEnabled()) {
                 ZooTrace.logTraceMessage(LOG, ZooTrace.EVENT_DELIVERY_TRACE_MASK, "No watchers for " + path);
@@ -161,10 +165,12 @@ public class WatchManager implements IWatchManager {
             return null;
         }
 
+        // 遍历监听器集合watchers，一一调用其process()方法
         for (Watcher w : watchers) {
             if (supress != null && supress.contains(w)) {
                 continue;
             }
+            // todo
             w.process(e);
         }
 

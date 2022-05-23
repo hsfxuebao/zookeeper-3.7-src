@@ -164,6 +164,7 @@ public class FinalRequestProcessor implements RequestProcessor {
         if (request.cnxn == null) {
             return;
         }
+        // 此为通信客户端在服务端的连接对象
         ServerCnxn cnxn = request.cnxn;
 
         long lastZxid = zks.getZKDatabase().getDataTreeLastProcessedZxid();
@@ -371,6 +372,7 @@ public class FinalRequestProcessor implements RequestProcessor {
                 break;
             }
             case OpCode.exists: {
+                // 如果一切顺利，最终一定会调用到这里来，
                 lastOp = "EXIS";
                 // TODO we need to figure out the security requirement for this!
                 ExistsRequest existsRequest = new ExistsRequest();
@@ -379,6 +381,8 @@ public class FinalRequestProcessor implements RequestProcessor {
                 if (path.indexOf('\0') != -1) {
                     throw new KeeperException.BadArgumentsException();
                 }
+                // 属性便决定了是否进行监听，如果监听则会把cnxn客户端对象
+                // 当成服务端的监听器放到DataTree的监听表中，对象类型ServerCnxn
                 Stat stat = zks.getZKDatabase().statNode(path, existsRequest.getWatch() ? cnxn : null);
                 rsp = new ExistsResponse(stat);
                 requestPathMetricsCollector.registerRequest(request.type, path);

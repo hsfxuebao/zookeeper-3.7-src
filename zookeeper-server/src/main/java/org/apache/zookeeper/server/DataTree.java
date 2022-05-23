@@ -658,6 +658,7 @@ public class DataTree {
         nodeDataSize.addAndGet(getNodeSize(path, data) - getNodeSize(path, lastdata));
 
         updateWriteStat(path, dataBytes);
+        // 将会从监听表中根据路径
         dataWatches.triggerWatch(path, EventType.NodeDataChanged);
         return s;
     }

@@ -92,14 +92,21 @@ public class Follower extends Learner {
                 // 开始连接Leader机器
                 connectToLeader(leaderServer.addr, leaderServer.hostname);
                 connectionTime = System.currentTimeMillis();
+                // 连接ServerSocket对象成功后本对象将会向其发送FOLLOWERINFO类型的消息
+                // 通知Leader本Follower的机器信息，如果是Observer则发送OBSERVERINFO
+                // 类型的消息通知Leader本Observer的机器信息
                 long newEpochZxid = registerWithLeader(Leader.FOLLOWERINFO);
                 if (self.isReconfigStateChange()) {
                     throw new Exception("learned about role change");
                 }
                 //check to see if the leader zxid is lower than ours
                 //this should never happen but is just a safety check
+                // 续着F4流程结束节点，F5流程开始
+                // 从zxid中获取最新的epoch信息
                 // todo 注册同步请求，FOLLOWERINFO,
                 long newEpoch = ZxidUtils.getEpochFromZxid(newEpochZxid);
+                // 如果经过交换epoch信息后的最新epoch信息还低于Follower本身的
+                // acceptedEpoch信息，则说明Leader领导流程有问题，需要中断重新选举
                 if (newEpoch < self.getAcceptedEpoch()) {
                     LOG.error("Proposed leader epoch "
                               + ZxidUtils.zxidToString(newEpochZxid)
@@ -110,7 +117,7 @@ public class Follower extends Learner {
                 long startTime = Time.currentElapsedTime();
                 self.setLeaderAddressAndId(leaderServer.addr, leaderServer.getId());
                 self.setZabState(QuorumPeer.ZabState.SYNCHRONIZATION);
-                // TODO
+                // TODO 进入数据同步阶段，包括F5、F6、F7和F8流程
                 syncWithLeader(newEpochZxid);
                 self.setZabState(QuorumPeer.ZabState.BROADCAST);
                 completedSync = true;
@@ -125,9 +132,14 @@ public class Follower extends Learner {
                     om = null;
                 }
                 // create a reusable packet to reduce gc impact
+                // 开始F9流程
+                // 开始创建数据包对象从LearnerHandler对象接收消息
                 QuorumPacket qp = new QuorumPacket();
+                // 开始死循环，知道集群对象停止运行
                 while (this.isRunning()) {
+                    // 读取包对象
                     readPacket(qp);
+                    // 开始处理读取到的包对象，具体留在后续文章分析
                     processPacket(qp);
                 }
             } catch (Exception e) {

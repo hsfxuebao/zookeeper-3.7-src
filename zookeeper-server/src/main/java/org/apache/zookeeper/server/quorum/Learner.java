@@ -493,56 +493,86 @@ public class Learner {
         /*
          * Send follower info, including last zxid and sid
          */
+        // 先获取最新的zxid
         long lastLoggedZxid = self.getLastLoggedZxid();
+        // 创建包对象
         QuorumPacket qp = new QuorumPacket();
+        // pktType如果是Follower对象则是FOLLOWERINFO，如果是Observer则是
+        // OBSERVERINFO类型
         qp.setType(pktType);
+        // 根据选举后接收的acceptedEpoch生成发送FOLLOWERINFO类型消息的zxid
         qp.setZxid(ZxidUtils.makeZxid(self.getAcceptedEpoch(), 0));
 
         /*
          * Add sid to payload
          */
+        // 生成LearnerInfo对象，需要注意包对象发送了protocolVersion属性
         LearnerInfo li = new LearnerInfo(self.getId(), 0x10000, self.getQuorumVerifier().getVersion());
+        // 生成BinaryOutputArchive对象，并将LeanerInfo对象写入
         ByteArrayOutputStream bsid = new ByteArrayOutputStream();
         BinaryOutputArchive boa = BinaryOutputArchive.getArchive(bsid);
         boa.writeRecord(li, "LearnerInfo");
+        // 将对象的字节数据放入包对象中
         qp.setData(bsid.toByteArray());
-
+        // 使用leaderOs对象发送包数据，F2流程结束
         writePacket(qp, true);
+        // 开始F3流程，接收到了Leader机器的LearnerHandler回复的LEADERINFO类型
+        // 消息
         readPacket(qp);
+        // 获取Leader回复的zxid，并根据zxid获取epoch信息
         final long newEpoch = ZxidUtils.getEpochFromZxid(qp.getZxid());
         // "这里接收到来自leader的同步协议handshake的响应。LEADERINFO "
+        // 版本相同的情况下这里接收到的肯定是LEADERINFO类型消息
         if (qp.getType() == Leader.LEADERINFO) {
             // we are connected to a 1.0 server so accept the new epoch and read the next packet
+            // 获取Leader回复的leaderProtocolVersion属性信息
             leaderProtocolVersion = ByteBuffer.wrap(qp.getData()).getInt();
+            // 生成等下发送ACKEPOCH类型消息的消息体
             byte[] epochBytes = new byte[4];
+            // 封装需要发送的消息体数据
             final ByteBuffer wrappedEpochBytes = ByteBuffer.wrap(epochBytes);
+            // 如果Leader发送过来的epoch大于本机器的acceptedEpoch，则直接发送
+            // 本机器的currentEpoch属性，并设置acceptedEpoch信息
             if (newEpoch > self.getAcceptedEpoch()) {
+                // 放置currentEpoch属性
                 wrappedEpochBytes.putInt((int) self.getCurrentEpoch());
+                // 根据epoch信息设置acceptedEpoch属性
                 self.setAcceptedEpoch(newEpoch);
             } else if (newEpoch == self.getAcceptedEpoch()) {
                 // since we have already acked an epoch equal to the leaders, we cannot ack
                 // again, but we still need to send our lastZxid to the leader so that we can
                 // sync with it if it does assume leadership of the epoch.
                 // the -1 indicates that this reply should not count as an ack for the new epoch
+                // 如果相等的说明选举获得的acceptedEpoch是没问题的
                 wrappedEpochBytes.putInt(-1);
             } else {
+                // newEpoch是不可能比acceptedEpoch小的，小的话说明流程出现了
+                // 问题，直接抛出异常结束流程
                 throw new IOException("Leaders epoch, "
                                       + newEpoch
                                       + " is less than accepted epoch, "
                                       + self.getAcceptedEpoch());
             }
             // " 发送ACKEPOCH同步他的初始zxid 。有点像tcp协议的初始化ISN。 "
+            // 直接根据F3流程获取的epoch字节数据响应ACKEPOCH类型消息
             QuorumPacket ackNewEpoch = new QuorumPacket(Leader.ACKEPOCH, lastLoggedZxid, epochBytes, null);
+            // 发送消息
             writePacket(ackNewEpoch, true);
+            // 返回新的epoch信息后F4流程结束
             return ZxidUtils.makeZxid(newEpoch, 0);
         } else {
+            // 估计是兼容老版本的逻辑，中途不经过ACKEPOCH过程
+            // 直接发送NEWLEADER类型消息
             if (newEpoch > self.getAcceptedEpoch()) {
+                // 如果大于则设置acceptedEpoch信息
                 self.setAcceptedEpoch(newEpoch);
             }
+            // 不是NEWLEADER信息则说明老版本流程异常，抛出异常结束流程
             if (qp.getType() != Leader.NEWLEADER) {
                 LOG.error("First packet should have been NEWLEADER");
                 throw new IOException("First packet should have been NEWLEADER");
             }
+            // 返回Leader数据包的zxid
             return qp.getZxid();
         }
     }
@@ -555,8 +585,10 @@ public class Learner {
      * @throws InterruptedException
      */
     protected void syncWithLeader(long newLeaderZxid) throws Exception {
+        // 开始数据同步阶段，先创建接收包数据的对象qp
         QuorumPacket ack = new QuorumPacket(Leader.ACK, 0, null, null);
         QuorumPacket qp = new QuorumPacket();
+        // 根据Leader集群最新的zxid获取最新的epoch信息
         long newEpoch = ZxidUtils.getEpochFromZxid(newLeaderZxid);
 
         QuorumVerifier newLeaderQV = null;
@@ -565,11 +597,15 @@ public class Learner {
         // For SNAP and TRUNC the snapshot is needed to save that history
         boolean snapshotNeeded = true;
         boolean syncSnapshot = false;
+        // 读取H5流程发送过来的消息，类型为SNAP、DIFF或TRUNC三种之一
         readPacket(qp);
+        // 创建用来保存已提交包信息zxid信息的集合
         Deque<Long> packetsCommitted = new ArrayDeque<>();
+        // 创建用来保存未提交包信息对象的集合
         Deque<PacketInFlight> packetsNotCommitted = new ArrayDeque<>();
         synchronized (zk) {
             if (qp.getType() == Leader.DIFF) {
+                // DIFF则暂时什么都不做
                 LOG.info("Getting a diff from the leader 0x{}", Long.toHexString(qp.getZxid()));
                 self.setSyncMode(QuorumPeer.SyncMode.DIFF);
                 if (zk.shouldForceWriteInitialSnapshotAfterLeaderElection()) {
@@ -586,6 +622,7 @@ public class Learner {
                 LOG.info("Getting a snapshot from leader 0x{}", Long.toHexString(qp.getZxid()));
                 // The leader is going to dump the database
                 // db is clear as part of deserializeSnapshot()
+                // 开始反序列化发送过来的session信息和DataTree等信息
                 zk.getZKDatabase().deserializeSnapshot(leaderIs);
                 // ZOOKEEPER-2819: overwrite config node content extracted
                 // from leader snapshot with local config, to avoid potential
@@ -595,6 +632,7 @@ public class Learner {
                     zk.getZKDatabase().initConfigInZKDatabase(self.getQuorumVerifier());
                 }
                 String signature = leaderIs.readString("signature");
+                // 如果签名有误则中断后续流程
                 if (!signature.equals("BenWasHere")) {
                     LOG.error("Missing signature. Got {}", signature);
                     throw new IOException("Missing signature");
@@ -604,10 +642,12 @@ public class Learner {
                 // immediately persist the latest snapshot when there is txn log gap
                 syncSnapshot = true;
             } else if (qp.getType() == Leader.TRUNC) {
+                // 从包数据对象的zxid开始，删除本机器中的日志文件
                 //we need to truncate the log to the lastzxid of the leader
                 self.setSyncMode(QuorumPeer.SyncMode.TRUNC);
                 LOG.warn("Truncating log to get in sync with the leader 0x{}", Long.toHexString(qp.getZxid()));
                 boolean truncated = zk.getZKDatabase().truncateLog(qp.getZxid());
+                // 如果删除失败则退出系统
                 if (!truncated) {
                     // not able to truncate the log
                     LOG.error("Not able to truncate the log 0x{}", Long.toHexString(qp.getZxid()));
@@ -616,12 +656,16 @@ public class Learner {
                 zk.getZKDatabase().setlastProcessedZxid(qp.getZxid());
 
             } else {
+                // 如果收到的消息类型不是SNAP、DIFF或TRUNC三者之一，则退出系统
                 LOG.error("Got unexpected packet from leader: {}, exiting ... ", LearnerHandler.packetToString(qp));
                 ServiceUtils.requestSystemExit(ExitCode.QUORUM_PACKET_ERROR.getValue());
             }
+            // 前面可能会执行TRUNC操作，因此需要将包数据的zxidd设置给zk
+            // 数据中心的lastProcessedZxid属性
             zk.getZKDatabase().initConfigInZKDatabase(self.getQuorumVerifier());
+            // 创建LearnerSessionTracker对象，该对象主要是维护session快照信息
             zk.createSessionTracker();
-
+            // 记录最后面使用的zxid值
             long lastQueued = 0;
 
             // in Zab V1.0 (ZK 3.4+) we might take a snapshot when we get the NEWLEADER message, but in pre V1.0
@@ -633,15 +677,24 @@ public class Learner {
             boolean writeToTxnLog = !snapshotNeeded;
             TxnLogEntry logEntry;
             // we are now going to start getting transactions to apply followed by an UPTODATE
+            // 开始轮询，直到使用break outerLoop语句
             outerLoop:
             while (self.isRunning()) {
+                // 轮询从LearnerHandler接收消息PROPOSAL、COMMIT、NEWLEADER
+                // 和UPTODATE这四种，INFORM是Observer相关的，和Follower交互
+                // 不会有这种类型的消息，因此忽略。但是在F6流程中只会接收
+                // PROPOSAL、COMMIT、NEWLEADER这三种，UPTODATE是F7流程接收的
                 readPacket(qp);
                 // "如果是DIff的方式同步，那么leader会不断发送PROPOSAL,COMMIT数据包。这里涉及到二阶段提交。packetsNotCommitted加一条  "
                 switch (qp.getType()) {
                 case Leader.PROPOSAL:
+                    // 属于F5流程中处理PROPOSAL-COMMIT消息对的PROPOSAL消息
+                    // 接收同步具体信息对象类型，并使用PacketInFlight对象
+                    // 反序列化接收
                     PacketInFlight pif = new PacketInFlight();
                     logEntry = SerializeUtils.deserializeTxn(qp.getData());
                     pif.hdr = logEntry.getHeader();
+                    // 使用包数据反序列化成Record对象
                     pif.rec = logEntry.getTxn();
                     pif.digest = logEntry.getDigest();
                     if (pif.hdr.getZxid() != lastQueued + 1) {
@@ -650,6 +703,7 @@ public class Learner {
                             Long.toHexString(pif.hdr.getZxid()),
                             Long.toHexString(lastQueued + 1));
                     }
+                    // 记录最后一次拿出来的zxid
                     lastQueued = pif.hdr.getZxid();
 
                     if (pif.hdr.getType() == OpCode.reconfig) {
@@ -657,12 +711,16 @@ public class Learner {
                         QuorumVerifier qv = self.configFromString(new String(setDataTxn.getData(), UTF_8));
                         self.setLastSeenQuorumVerifier(qv, true);
                     }
-
+                    // 将反序列化之后的数据包对象保存到packetsNotCommitted集合
                     packetsNotCommitted.add(pif);
                     break;
                 case Leader.COMMIT:
                 case Leader.COMMITANDACTIVATE:
+                    // 属于F5流程中处理PROPOSAL-COMMIT消息对的COMMIT消息
                     pif = packetsNotCommitted.peekFirst();
+                    // 还未接收到NERLEADER信息
+                    // 代表需要使用执行ZooKeeperServer处理一遍请求，处理
+                    // 之后便从packetsNotCommitted删除
                     if (pif.hdr.getZxid() == qp.getZxid() && qp.getType() == Leader.COMMITANDACTIVATE) {
                         QuorumVerifier qv = self.configFromString(new String(((SetDataTxn) pif.rec).getData(), UTF_8));
                         boolean majorChange = self.processReconfig(
@@ -680,10 +738,16 @@ public class Learner {
                                 Long.toHexString(qp.getZxid()),
                                 Long.toHexString(pif.hdr.getZxid()));
                         } else {
+                            // 只有当COMMIT消息是和上次接收到的PROPOSAL消息zxid
+                            // 一致才处理请求，zxid一致说明是有效的PROPOSAL-
+                            // COMMIT消息对
+                            // 处理需要同步的请求消息
                             zk.processTxn(pif.hdr, pif.rec);
+                            // 从未commit的集合中删除已经处理过的对象
                             packetsNotCommitted.remove();
                         }
                     } else {
+                        // 如果snapshotTaken为true则说明该包已经处理过了
                         packetsCommitted.add(qp.getZxid());
                     }
                     break;
@@ -730,6 +794,8 @@ public class Learner {
                     break;
                 case Leader.UPTODATE:
                     LOG.info("Learner received UPTODATE message");
+                    // 开始F8流程处理
+                    // 接收到LearnerHandler发送过来的UPTODATE类型消息
                     if (newLeaderQV != null) {
                         boolean majorChange = self.processReconfig(newLeaderQV, null, null, true);
                         if (majorChange) {
@@ -737,15 +803,23 @@ public class Learner {
                         }
                     }
                     if (isPreZAB1_0) {
+                        // 如果Follower接收了NEWLEADER类型消息，将不会执行
+                        // 到这里面，否则将会执行到这里保存快照信息
                         zk.takeSnapshot(syncSnapshot);
+                        // 设置currentEpoch信息
                         self.setCurrentEpoch(newEpoch);
                     }
+                    // 关联ServerCnxnFactory和ZooKeeperServer对象关系
                     self.setZooKeeperServer(zk);
                     self.adminServer.setZooKeeperServer(zk);
+                    // 结束outerLoop节点，跳出循环，F8流程结束
                     break outerLoop;
                 case Leader.NEWLEADER: // Getting NEWLEADER here instead of in discovery
                     // means this is Zab 1.0
                     LOG.info("Learner received NEWLEADER message");
+                    // 开始F6流程
+                    // 处理完Leader发送过来的PROPOSAL-COMMIT消息对后将会执行
+                    // 到F6流程，处理NEWLEADER消息
                     if (qp.getData() != null && qp.getData().length > 1) {
                         try {
                             QuorumVerifier qv = self.configFromString(new String(qp.getData(), UTF_8));
@@ -759,13 +833,14 @@ public class Learner {
                     if (snapshotNeeded) {
                         zk.takeSnapshot(syncSnapshot);
                     }
-
+                    // 设置本机器的currentEpoch属性且写入到currentEpoch文件
                     self.setCurrentEpoch(newEpoch);
                     writeToTxnLog = true;
                     //Anything after this needs to go to the transaction log, not applied directly in memory
                     isPreZAB1_0 = false;
 
                     // ZOOKEEPER-3911: make sure sync the uncommitted logs before commit them (ACK NEWLEADER).
+
                     sock.setSoTimeout(self.tickTime * self.syncLimit);
                     self.setSyncMode(QuorumPeer.SyncMode.NONE);
                     zk.startupWithoutServing();
@@ -777,11 +852,14 @@ public class Learner {
                         packetsNotCommitted.clear();
                     }
 
+                    // 续着F6流程结束，开始F7流程
+                    // F7流程很简单，直接使用集群交换信息后的zxid响应ACK消息
                     writePacket(new QuorumPacket(Leader.ACK, newLeaderZxid, null, null), true);
                     break;
                 }
             }
         }
+        // 续着F8流程结束，F9流程开始
         ack.setZxid(ZxidUtils.makeZxid(newEpoch, 0));
         writePacket(ack, true);
         zk.startServing();
@@ -792,15 +870,20 @@ public class Learner {
          *
          * @see https://issues.apache.org/jira/browse/ZOOKEEPER-1732
          */
+        // 设置当前机器的最新epoch信息
         self.updateElectionVote(newEpoch);
 
         // We need to log the stuff that came in between the snapshot and the uptodate
+        // 这里的zk对象类型一定是FollowerZooKeeperServer
         if (zk instanceof FollowerZooKeeperServer) {
             FollowerZooKeeperServer fzk = (FollowerZooKeeperServer) zk;
+            // 将前面同步PROPOSAL-COMMIT消息对尚未提交的包信息再次处理
             for (PacketInFlight p : packetsNotCommitted) {
+                // 调用保存到日志文件且同步到集群各个机器的操作
                 fzk.logRequest(p.hdr, p.rec, p.digest);
             }
             for (Long zxid : packetsCommitted) {
+                // 将已经提交的zxid信息调用commit方法
                 fzk.commit(zxid);
             }
         } else if (zk instanceof ObserverZooKeeperServer) {
@@ -827,6 +910,7 @@ public class Learner {
             }
         } else {
             // New server type need to handle in-flight packets
+            // 目前zk的类型只能是Foolower或Observer，如果是其它类型说明有问题
             throw new UnsupportedOperationException("Unknown server type");
         }
     }

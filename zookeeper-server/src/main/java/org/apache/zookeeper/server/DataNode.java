@@ -47,16 +47,19 @@ public class DataNode implements Record {
     volatile boolean digestCached;
 
     /** the data for this datanode */
+    //本节点数据
     byte[] data;
 
     /**
      * the acl map long for this datanode. the datatree has the map
      */
+    //ACL权限控制转换为long后的值
     Long acl;
 
     /**
      * the stat for this node that is persisted to disk.
      */
+    //持久化到磁盘后节点的stat信息
     public StatPersisted stat;
 
     /**
@@ -64,6 +67,7 @@ public class DataNode implements Record {
      * does not contain the parent path -- just the last part of the path. This
      * should be synchronized on except deserializing (for speed up issues).
      */
+    //子节点的集合
     private Set<String> children = null;
 
     private static final Set<String> EMPTY_SET = Collections.emptySet();

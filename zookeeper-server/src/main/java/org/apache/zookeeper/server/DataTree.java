@@ -103,10 +103,11 @@ public class DataTree {
      * This map provides a fast lookup to the datanodes. The tree is the
      * source of truth and is where all the locking occurs
      */
+    // 路径与节点的映射，能够通过路径（path）快速获取节点信息
     private final NodeHashMap nodes;
-
+    //监听（Watch）节点数据变化
     private IWatchManager dataWatches;
-
+    //监听子节点变化
     private IWatchManager childWatches;
 
     /** cached total size of paths and data for all DataNodes */
@@ -142,6 +143,7 @@ public class DataTree {
     /**
      * the path trie that keeps track of the quota nodes in this datatree
      */
+    //路径字典树，实现了hierarchal namespace
     private final PathTrie pTrie = new PathTrie();
 
     /**

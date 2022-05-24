@@ -66,6 +66,7 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
             while (!finished) {
                 ServerMetrics.getMetrics().LEARNER_REQUEST_PROCESSOR_QUEUE_SIZE.add(queuedRequests.size());
 
+                // todo
                 Request request = queuedRequests.take();
                 if (LOG.isTraceEnabled()) {
                     ZooTrace.logRequest(LOG, ZooTrace.CLIENT_REQUEST_TRACE_MASK, 'F', request, "");
@@ -82,6 +83,7 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
                 // We want to queue the request to be processed before we submit
                 // the request to the leader so that we are ready to receive
                 // the response
+                // 传给下一个processor处理
                 maybeSendRequestToNextProcessor(request);
 
                 if (request.isThrottled()) {
@@ -96,6 +98,7 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
                 switch (request.type) {
                 case OpCode.sync:
                     zks.pendingSyncs.add(request);
+                    // 向leader发送消息
                     zks.getFollower().request(request);
                     break;
                 case OpCode.create:
